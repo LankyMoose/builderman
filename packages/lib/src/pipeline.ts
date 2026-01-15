@@ -89,23 +89,12 @@ export function pipeline(tasks: Task[]): Pipeline {
           Path: newPath,
         }
 
-        // On Windows, use cmd.exe explicitly to avoid path resolution issues
-        // Using shell: true can cause issues with Git Bash paths
-        const spawnOptions: Parameters<typeof spawn>[2] = {
+        const child = spawn(command, {
           cwd,
           stdio: ["inherit", "pipe", "pipe"],
+          shell: true,
           env,
-        }
-
-        if (process.platform === "win32") {
-          // Use cmd.exe explicitly on Windows
-          spawnOptions.shell = process.env.ComSpec || "cmd.exe"
-        } else {
-          // On Unix-like systems, use shell: true
-          spawnOptions.shell = true
-        }
-
-        const child = spawn(command, spawnOptions)
+        })
 
         // Handle spawn errors
         child.on("error", (error) => {
