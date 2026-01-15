@@ -92,7 +92,7 @@ export function pipeline(tasks: Task[]): Pipeline {
         const child = spawn(command, {
           cwd,
           stdio: ["inherit", "pipe", "pipe"],
-          shell: true,
+          shell: false,
           env,
         })
 
