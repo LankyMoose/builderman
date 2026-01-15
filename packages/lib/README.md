@@ -78,30 +78,6 @@ const build = task({
 await build.run()
 ```
 
-### Pipeline Chaining
-
-Chain pipelines together using `andThen()`:
-
-```ts
-const build = pipeline([
-  task({ name: "compile", commands: { dev: "tsc", build: "tsc" }, cwd: "." }),
-])
-
-const ci = build
-  .andThen({
-    name: "test",
-    commands: { dev: "vitest watch", build: "vitest run" },
-    cwd: ".",
-  })
-  .andThen(
-    anotherPipeline.toTask({
-      //...
-    })
-  )
-
-await ci.run()
-```
-
 ### Composing Pipelines as Tasks
 
 Convert pipelines to tasks and compose them with explicit dependencies:

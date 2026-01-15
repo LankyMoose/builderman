@@ -7,7 +7,7 @@ import { createTaskGraph } from "./graph.js"
 import { createScheduler, SchedulerInput } from "./scheduler.js"
 import { task } from "./task.js"
 import { validateTasks } from "./util.js"
-import type { Pipeline, Task, PipelineTaskConfig, TaskConfig } from "./types.js"
+import type { Pipeline, Task, PipelineTaskConfig } from "./types.js"
 
 // Module-level cache for pipeline-to-task conversions
 // Key: Pipeline, Value: Map of name -> Task
@@ -22,30 +22,6 @@ export function pipeline(tasks: Task[]): Pipeline {
   graph.simplify()
 
   const pipelineImpl: Pipeline = {
-    andThen(next: Omit<TaskConfig, "dependencies">): Pipeline {
-      // Find exit nodes (tasks with no dependents) - these are the "last" tasks
-      const exitNodes: Task[] = []
-      for (const node of graph.nodes.values()) {
-        if (node.dependents.size === 0) {
-          exitNodes.push(node.task)
-        }
-      }
-
-      // Collect all tasks from the current pipeline
-      const allTasks: Task[] = []
-      for (const node of graph.nodes.values()) {
-        allTasks.push(node.task)
-      }
-
-      // Create a task that depends on exit nodes
-      const nextTask = task({
-        ...next,
-        dependencies: exitNodes,
-      })
-      allTasks.push(nextTask)
-
-      return pipeline(allTasks)
-    },
     toTask(config: PipelineTaskConfig): Task {
       validateTasks(config.dependencies)
 

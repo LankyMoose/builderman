@@ -46,7 +46,6 @@ export interface PipelineTaskConfig {
 export interface Pipeline {
   run(config?: PipelineRunConfig): Promise<void>
   toTask(config: PipelineTaskConfig): Task
-  andThen(next: Omit<TaskConfig, "dependencies">): Pipeline
 }
 
 export interface TaskNode {
