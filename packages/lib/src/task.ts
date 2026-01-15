@@ -14,12 +14,10 @@ export function task(config: TaskConfig): Task {
 
   return {
     name: config.name,
-    readyOrComplete(): Promise<void> {
-      return readyPromise
-    },
     [$TASK_INTERNAL]: {
       ...config,
-      dependsOn: config.dependsOn || [],
+      readyPromise,
+      dependencies: config.dependencies || [],
       isReady: () => isReady,
       isComplete: () => isComplete,
       markReady: () => {
