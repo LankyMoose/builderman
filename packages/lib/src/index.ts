@@ -5,13 +5,6 @@ export interface TaskConfig {
   name: string
   command: string
   cwd: string
-}
-
-export interface PipelineTaskConfig {
-  name: string
-  path?: string
-  cwd?: string
-  command: string
   requiresEvents?: string[]
 }
 
@@ -42,30 +35,14 @@ export function task(config: TaskConfig): Task {
     name: config.name,
     command: config.command,
     cwd: config.cwd,
-    requiresEvents: [],
+    requiresEvents: config.requiresEvents || [],
   }
 }
 
 /**
  * Creates a pipeline that manages task execution with event-based dependencies.
  */
-export function pipeline(configs: (Task | PipelineTaskConfig)[]): Pipeline {
-  const tasks: Task[] = configs.map((config) => {
-    if ("requiresEvents" in config || "path" in config) {
-      // It's a PipelineTaskConfig
-      const taskConfig = config as PipelineTaskConfig
-      return {
-        name: taskConfig.name,
-        command: taskConfig.command,
-        cwd: taskConfig.path || taskConfig.cwd || process.cwd(),
-        requiresEvents: taskConfig.requiresEvents || [],
-      }
-    } else {
-      // It's already a Task
-      return config as Task
-    }
-  })
-
+export function pipeline(tasks: Task[]): Pipeline {
   return {
     async run(): Promise<void> {
       const eventEmitter = new EventEmitter<{
