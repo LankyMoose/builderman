@@ -89,25 +89,23 @@ export function pipeline(tasks: Task[]): Pipeline {
           Path: newPath,
         }
 
-        // On Windows, use the shell from environment or default to cmd.exe
-        // In Git Bash, use bash instead
-        let shell: string | boolean = true
-        if (process.platform === "win32") {
-          // Check if we're in Git Bash (SHELL env var is set)
-          if (process.env.SHELL && process.env.SHELL.includes("bash")) {
-            shell = process.env.SHELL
-          } else {
-            // Use ComSpec (cmd.exe) or fallback
-            shell = process.env.ComSpec || "cmd.exe"
-          }
-        }
-
-        const child = spawn(command, {
+        // On Windows, use cmd.exe explicitly to avoid path resolution issues
+        // Using shell: true can cause issues with Git Bash paths
+        const spawnOptions: Parameters<typeof spawn>[2] = {
           cwd,
           stdio: ["inherit", "pipe", "pipe"],
-          shell,
           env,
-        })
+        }
+
+        if (process.platform === "win32") {
+          // Use cmd.exe explicitly on Windows
+          spawnOptions.shell = process.env.ComSpec || "cmd.exe"
+        } else {
+          // On Unix-like systems, use shell: true
+          spawnOptions.shell = true
+        }
+
+        const child = spawn(command, spawnOptions)
 
         // Handle spawn errors
         child.on("error", (error) => {
