@@ -74,6 +74,8 @@ export function pipeline(tasks: Task[]): Pipeline {
           return
         }
 
+        console.error(`[builderman] Starting task: ${task.name}`)
+
         // Ensure node_modules/.bin is in PATH for local dependencies
         // Resolve cwd relative to current working directory
         const taskCwd = path.isAbsolute(task.cwd)
@@ -113,6 +115,15 @@ export function pipeline(tasks: Task[]): Pipeline {
           stdio: ["inherit", "pipe", "pipe"],
           shell: true,
           env,
+        })
+
+        // Handle spawn errors
+        child.on("error", (error) => {
+          console.error(`[${task.name}] Failed to start:`, error.message)
+          runningTasks.delete(task.name)
+          completedTasks.add(task.name)
+          process.exitCode = 1
+          eventEmitter.emit("taskCompleted", task.name)
         })
 
         runningTasks.set(task.name, child)
