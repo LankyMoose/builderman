@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from "node:child_process"
 import { EventEmitter } from "node:events"
+import * as path from "node:path"
 
 export interface TaskConfig {
   name: string
@@ -73,11 +74,45 @@ export function pipeline(tasks: Task[]): Pipeline {
           return
         }
 
-        const [command, ...args] = task.command.split(/\s+/)
-        const child = spawn(command, args, {
+        // Ensure node_modules/.bin is in PATH for local dependencies
+        // Resolve cwd relative to current working directory
+        const taskCwd = path.isAbsolute(task.cwd)
+          ? task.cwd
+          : path.resolve(process.cwd(), task.cwd)
+        const localBinPath = path.join(taskCwd, "node_modules", ".bin")
+
+        // Build PATH with local node_modules/.bin first (as absolute path), then existing PATH
+        const existingPath = process.env.PATH || process.env.Path || ""
+        const pathSeparator = process.platform === "win32" ? ";" : ":"
+
+        // Collect all potential bin paths (local first, then root, then existing)
+        const binPaths: string[] = [localBinPath]
+
+        // Also add root node_modules/.bin if different from local
+        const rootBinPath = path.join(process.cwd(), "node_modules", ".bin")
+        if (rootBinPath !== localBinPath) {
+          binPaths.push(rootBinPath)
+        }
+
+        // Add existing PATH
+        if (existingPath) {
+          binPaths.push(existingPath)
+        }
+
+        const newPath = binPaths.join(pathSeparator)
+
+        const env = {
+          ...process.env,
+          PATH: newPath,
+          Path: newPath, // Windows uses both PATH and Path
+        }
+
+        // Use shell mode to allow commands like "vite dev" to work properly
+        const child = spawn(task.command, {
           cwd: task.cwd,
           stdio: ["inherit", "pipe", "pipe"],
-          shell: process.platform === "win32",
+          shell: true,
+          env,
         })
 
         runningTasks.set(task.name, child)
