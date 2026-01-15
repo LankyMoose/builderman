@@ -17,22 +17,36 @@ interface TaskInternal extends Omit<TaskConfig, "isReady"> {
   id: number
   dependencies: Task[]
   shouldStdoutMarkReady?: (stdout: string) => boolean
+  pipeline?: Pipeline // If set, this task represents a nested pipeline
 }
 
 export interface Task {
   name: string
   [$TASK_INTERNAL]: TaskInternal
+  andThen(config: Omit<TaskConfig, "dependencies">): Pipeline
 }
 
 export interface PipelineRunConfig {
+  /**
+   * Provides a custom spawn function for the pipeline.
+   * @default import("node:child_process").spawn
+   */
+  spawn?: typeof import("node:child_process").spawn
   onTaskError?: (taskName: string, error: Error) => void
   onTaskComplete?: (taskName: string) => void
   onPipelineError?: (error: Error) => void
   onPipelineComplete?: () => void
 }
 
+export interface PipelineTaskConfig {
+  name: string
+  dependencies?: Task[]
+}
+
 export interface Pipeline {
-  run(config: PipelineRunConfig): Promise<void>
+  run(config?: PipelineRunConfig): Promise<void>
+  toTask(config: PipelineTaskConfig): Task
+  andThen(next: Omit<TaskConfig, "dependencies">): Pipeline
 }
 
 export interface TaskNode {

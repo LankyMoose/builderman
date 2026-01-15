@@ -264,8 +264,9 @@ describe("pipeline", () => {
       return mockProcess
     })
 
-    const pipe = pipeline([task1, task2], mockSpawn as any)
+    const pipe = pipeline([task1, task2])
     await pipe.run({
+      spawn: mockSpawn as any,
       onTaskComplete: (name) => {
         executionOrder.push(`complete:${name}`)
       },
@@ -297,11 +298,12 @@ describe("pipeline", () => {
       return mockProcess
     })
 
-    const pipe = pipeline([task1], mockSpawn as any)
+    const pipe = pipeline([task1])
     let errorCaught = false
 
     await pipe
       .run({
+        spawn: mockSpawn as any,
         onTaskError: (name, error) => {
           assert.strictEqual(name, "task1")
           assert.ok(error.message.includes("exit code"))
@@ -335,10 +337,11 @@ describe("pipeline", () => {
       return mockProcess
     })
 
-    const pipe = pipeline([task1], mockSpawn as any)
+    const pipe = pipeline([task1])
     let pipelineCompleteCalled = false
 
     await pipe.run({
+      spawn: mockSpawn as any,
       onPipelineComplete: () => {
         pipelineCompleteCalled = true
       },
@@ -396,8 +399,9 @@ describe("pipeline", () => {
       return mockProcess
     })
 
-    const pipe = pipeline([task1, task2], mockSpawn as any)
+    const pipe = pipeline([task1, task2])
     await pipe.run({
+      spawn: mockSpawn as any,
       onTaskComplete: (name) => {
         executionOrder.push(`complete:${name}`)
       },
@@ -413,8 +417,14 @@ describe("pipeline", () => {
     const task1BeforeReadyIndex = executionOrder.indexOf("task1:before-ready")
     const task2StartedIndex = executionOrder.indexOf("task2:started")
     const task1AfterReadyIndex = executionOrder.indexOf("task1:after-ready")
-    assert.ok(task1BeforeReadyIndex < task2StartedIndex, "task2 should start after task1 ready event is triggered")
-    assert.ok(task2StartedIndex < task1AfterReadyIndex, "task2 starts during ready event processing")
+    assert.ok(
+      task1BeforeReadyIndex < task2StartedIndex,
+      "task2 should start after task1 ready event is triggered"
+    )
+    assert.ok(
+      task2StartedIndex < task1AfterReadyIndex,
+      "task2 starts during ready event processing"
+    )
   })
 
   it("starts dependent task immediately when task has no isReady", async () => {
@@ -455,8 +465,10 @@ describe("pipeline", () => {
       return mockProcess
     })
 
-    const pipe = pipeline([task1, task2], mockSpawn as any)
-    await pipe.run({})
+    const pipe = pipeline([task1, task2])
+    await pipe.run({
+      spawn: mockSpawn as any,
+    })
 
     // task1 should start first
     assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
@@ -466,10 +478,16 @@ describe("pipeline", () => {
     const task1StartedIndex = executionOrder.indexOf("task1:started")
     const task2StartedIndex = executionOrder.indexOf("task2:started")
     // task2 should start very soon after task1 (they should be close in execution order)
-    assert.ok(task2StartedIndex > task1StartedIndex, "task2 should start after task1")
+    assert.ok(
+      task2StartedIndex > task1StartedIndex,
+      "task2 should start after task1"
+    )
     // The key is that task2 starts without waiting for task1 to complete
     // (completion order may vary due to timing, but starting order is what matters)
-    assert.ok(task2StartedIndex === task1StartedIndex + 1, "task2 should start immediately after task1 (no delay)")
+    assert.ok(
+      task2StartedIndex === task1StartedIndex + 1,
+      "task2 should start immediately after task1 (no delay)"
+    )
   })
 
   it("starts multiple dependents when task with isReady becomes ready", async () => {
@@ -524,8 +542,10 @@ describe("pipeline", () => {
       return mockProcess
     })
 
-    const pipe = pipeline([task1, task2, task3], mockSpawn as any)
-    await pipe.run({})
+    const pipe = pipeline([task1, task2, task3])
+    await pipe.run({
+      spawn: mockSpawn as any,
+    })
 
     // task1 should start first
     assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
@@ -535,8 +555,14 @@ describe("pipeline", () => {
     // Both task2 and task3 should start after task1 ready event is triggered
     const task2StartedIndex = executionOrder.indexOf("task2:started")
     const task3StartedIndex = executionOrder.indexOf("task3:started")
-    assert.ok(task2StartedIndex > task1BeforeReadyIndex, "task2 should start after task1 ready event is triggered")
-    assert.ok(task3StartedIndex > task1BeforeReadyIndex, "task3 should start after task1 ready event is triggered")
+    assert.ok(
+      task2StartedIndex > task1BeforeReadyIndex,
+      "task2 should start after task1 ready event is triggered"
+    )
+    assert.ok(
+      task3StartedIndex > task1BeforeReadyIndex,
+      "task3 should start after task1 ready event is triggered"
+    )
   })
 
   it("waits for all dependencies with isReady before starting dependent task", async () => {
@@ -596,8 +622,10 @@ describe("pipeline", () => {
       return mockProcess
     })
 
-    const pipe = pipeline([task1, task2, task3], mockSpawn as any)
-    await pipe.run({})
+    const pipe = pipeline([task1, task2, task3])
+    await pipe.run({
+      spawn: mockSpawn as any,
+    })
 
     // task1 and task2 should start (order doesn't matter)
     assert.ok(executionOrder.includes("task1:started"))
@@ -609,7 +637,301 @@ describe("pipeline", () => {
     const task1BeforeReadyIndex = executionOrder.indexOf("task1:before-ready")
     const task2BeforeReadyIndex = executionOrder.indexOf("task2:before-ready")
     const task3StartedIndex = executionOrder.indexOf("task3:started")
-    const lastReadyIndex = Math.max(task1BeforeReadyIndex, task2BeforeReadyIndex)
-    assert.ok(task3StartedIndex > lastReadyIndex, "task3 should start after both dependencies' ready events are triggered")
+    const lastReadyIndex = Math.max(
+      task1BeforeReadyIndex,
+      task2BeforeReadyIndex
+    )
+    assert.ok(
+      task3StartedIndex > lastReadyIndex,
+      "task3 should start after both dependencies' ready events are triggered"
+    )
+  })
+})
+
+describe("pipeline -> task conversion", () => {
+  it("converts pipelines to tasks", async () => {
+    const executionOrder: string[] = []
+
+    // Mock spawn to track execution
+    const mockSpawn = mock.fn((command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      // Extract task name from command
+      const taskName = command.match(/echo\s+([^\s]+)/)?.[1] || "unknown"
+      executionOrder.push(`start:${taskName}`)
+
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+        executionOrder.push(`complete:${taskName}`)
+      })
+
+      return mockProcess
+    })
+
+    // Create individual pipelines with mock spawn
+    const buildTask1 = task({
+      name: "build:compile",
+      commands: { dev: "echo build:compile", build: "echo build:compile" },
+      cwd: ".",
+    })
+    const buildTask2 = task({
+      name: "build:bundle",
+      commands: { dev: "echo build:bundle", build: "echo build:bundle" },
+      cwd: ".",
+      dependencies: [buildTask1],
+    })
+    const build = pipeline([buildTask1, buildTask2])
+
+    const testTask1 = task({
+      name: "test:unit",
+      commands: { dev: "echo test:unit", build: "echo test:unit" },
+      cwd: ".",
+    })
+    const test = pipeline([testTask1])
+
+    const deployTask1 = task({
+      name: "deploy:upload",
+      commands: { dev: "echo deploy:upload", build: "echo deploy:upload" },
+      cwd: ".",
+    })
+    const deploy = pipeline([deployTask1])
+
+    // Compose pipelines
+    const buildTask = build.toTask({ name: "build" })
+    const testTask = test.toTask({
+      name: "test",
+      dependencies: [buildTask],
+    })
+    const deployTask = deploy.toTask({
+      name: "deploy",
+      dependencies: [testTask],
+    })
+
+    const ci = pipeline([buildTask, testTask, deployTask])
+
+    await ci.run({
+      spawn: mockSpawn as any,
+      onTaskComplete: (name) => {
+        executionOrder.push(`pipeline-complete:${name}`)
+      },
+    })
+
+    // Verify execution order: build pipeline should complete before test starts
+    // Note: pipeline-complete events fire when the scheduler is done, which may be
+    // before individual task exit events due to async timing
+    const buildPipelineCompleteIndex = executionOrder.indexOf(
+      "pipeline-complete:build"
+    )
+    const testStartIndex = executionOrder.indexOf("start:test:unit")
+
+    assert.ok(
+      buildPipelineCompleteIndex !== -1,
+      "build pipeline should complete"
+    )
+    assert.ok(testStartIndex !== -1, "test:unit should start")
+
+    // Build pipeline should complete before test starts
+    assert.ok(
+      buildPipelineCompleteIndex < testStartIndex,
+      `build pipeline should complete before test starts. Build completed at ${buildPipelineCompleteIndex}, test started at ${testStartIndex}. Order: ${executionOrder.join(
+        ", "
+      )}`
+    )
+
+    // Test pipeline should complete before deploy starts
+    const testPipelineCompleteIndex = executionOrder.indexOf(
+      "pipeline-complete:test"
+    )
+    const deployStartIndex = executionOrder.indexOf("start:deploy:upload")
+    assert.ok(
+      testPipelineCompleteIndex < deployStartIndex,
+      `test pipeline should complete before deploy starts. Test completed at ${testPipelineCompleteIndex}, deploy started at ${deployStartIndex}. Order: ${executionOrder.join(
+        ", "
+      )}`
+    )
+
+    // Verify all tasks executed
+    assert.ok(
+      executionOrder.includes("start:build:compile"),
+      "build:compile should start"
+    )
+    assert.ok(
+      executionOrder.includes("start:build:bundle"),
+      "build:bundle should start"
+    )
+    assert.ok(
+      executionOrder.includes("start:test:unit"),
+      "test:unit should start"
+    )
+    assert.ok(
+      executionOrder.includes("start:deploy:upload"),
+      "deploy:upload should start"
+    )
+  })
+
+  it("throws error when using unconverted pipeline as dependency", () => {
+    const build = pipeline([
+      task({
+        name: "build",
+        commands: { dev: "echo build", build: "echo build" },
+        cwd: ".",
+      }),
+    ])
+
+    const test = pipeline([
+      task({
+        name: "test",
+        commands: { dev: "echo test", build: "echo test" },
+        cwd: ".",
+      }),
+    ])
+
+    // Try to use build pipeline as dependency without converting it first
+    assert.throws(() => {
+      test.toTask({
+        name: "test",
+        dependencies: [
+          // @ts-expect-error - build is a pipeline
+          build,
+        ],
+      })
+    }, /Invalid dependency/)
+  })
+
+  it("chains tasks with andThen", async () => {
+    const executionOrder: string[] = []
+
+    // Mock spawn to track execution
+    const mockSpawn = mock.fn((command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      // Extract task name from command
+      const taskName = command.match(/echo\s+([^\s]+)/)?.[1] || "unknown"
+      executionOrder.push(`start:${taskName}`)
+
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+        executionOrder.push(`complete:${taskName}`)
+      })
+
+      return mockProcess
+    })
+
+    // Use andThen to chain tasks
+    const build = task({
+      name: "compile",
+      commands: { dev: "echo compile", build: "echo compile" },
+      cwd: ".",
+    }).andThen({
+      name: "bundle",
+      commands: { dev: "echo bundle", build: "echo bundle" },
+      cwd: ".",
+    })
+
+    // Verify it returns a pipeline
+    assert.ok("run" in build, "andThen should return a pipeline")
+    assert.ok("toTask" in build, "andThen should return a pipeline")
+
+    // Run the pipeline
+    await build.run({
+      spawn: mockSpawn as any,
+    })
+
+    // Verify execution order: compile should complete before bundle starts
+    // Note: Due to async timing with setImmediate, we verify that compile starts first
+    // and that bundle doesn't start until after compile's completion is processed
+    const compileStartIndex = executionOrder.indexOf("start:compile")
+    const compileCompleteIndex = executionOrder.indexOf("complete:compile")
+    const bundleStartIndex = executionOrder.indexOf("start:bundle")
+    const bundleCompleteIndex = executionOrder.indexOf("complete:bundle")
+
+    assert.ok(compileStartIndex !== -1, "compile should start")
+    assert.ok(compileCompleteIndex !== -1, "compile should complete")
+    assert.ok(bundleStartIndex !== -1, "bundle should start")
+    assert.ok(bundleCompleteIndex !== -1, "bundle should complete")
+
+    // Compile should start before bundle
+    assert.ok(
+      compileStartIndex < bundleStartIndex,
+      `compile should start before bundle. Compile started at ${compileStartIndex}, bundle started at ${bundleStartIndex}. Order: ${executionOrder.join(
+        ", "
+      )}`
+    )
+
+    // Bundle should complete after compile completes
+    assert.ok(
+      bundleCompleteIndex > compileCompleteIndex,
+      `bundle should complete after compile. Compile completed at ${compileCompleteIndex}, bundle completed at ${bundleCompleteIndex}. Order: ${executionOrder.join(
+        ", "
+      )}`
+    )
+  })
+
+  it("chains pipelines with andThen using task config", async () => {
+    const executionOrder: string[] = []
+
+    // Mock spawn to track execution
+    const mockSpawn = mock.fn((command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      // Extract task name from command
+      const taskName = command.match(/echo\s+([^\s]+)/)?.[1] || "unknown"
+      executionOrder.push(`start:${taskName}`)
+
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+        executionOrder.push(`complete:${taskName}`)
+      })
+
+      return mockProcess
+    })
+
+    // Create a pipeline and chain a task to it
+    const build = pipeline([
+      task({
+        name: "compile",
+        commands: { dev: "echo compile", build: "echo compile" },
+        cwd: ".",
+      }),
+    ]).andThen({
+      name: "bundle",
+      commands: { dev: "echo bundle", build: "echo bundle" },
+      cwd: ".",
+    })
+
+    // Verify it returns a pipeline
+    assert.ok("run" in build, "andThen should return a pipeline")
+    assert.ok("toTask" in build, "andThen should return a pipeline")
+
+    // Run the pipeline
+    await build.run({
+      spawn: mockSpawn as any,
+    })
+
+    // Verify execution order: compile should complete before bundle starts
+    const compileStartIndex = executionOrder.indexOf("start:compile")
+    const compileCompleteIndex = executionOrder.indexOf("complete:compile")
+    const bundleStartIndex = executionOrder.indexOf("start:bundle")
+
+    assert.ok(compileStartIndex !== -1, "compile should start")
+    assert.ok(compileCompleteIndex !== -1, "compile should complete")
+    assert.ok(bundleStartIndex !== -1, "bundle should start")
+
+    // Compile should start before bundle
+    assert.ok(
+      compileStartIndex < bundleStartIndex,
+      `compile should start before bundle. Compile started at ${compileStartIndex}, bundle started at ${bundleStartIndex}. Order: ${executionOrder.join(
+        ", "
+      )}`
+    )
   })
 })

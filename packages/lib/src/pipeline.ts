@@ -5,25 +5,75 @@ import * as fs from "node:fs"
 import { $TASK_INTERNAL } from "./constants.js"
 import { createTaskGraph } from "./graph.js"
 import { createScheduler, SchedulerInput } from "./scheduler.js"
-import type { Pipeline, Task } from "./types.js"
+import { task } from "./task.js"
+import { validateTasks } from "./util.js"
+import type { Pipeline, Task, PipelineTaskConfig, TaskConfig } from "./types.js"
+
+// Module-level cache for pipeline-to-task conversions
+// Key: Pipeline, Value: Map of name -> Task
+const pipelineTaskCache = new WeakMap<Pipeline, Map<string, Task>>()
 
 /**
  * Creates a pipeline that manages task execution with dependency-based coordination.
- * @param tasks - Array of tasks to execute
- * @param spawnFn - Optional spawn function for testing (defaults to node:child_process spawn)
  */
-
-export function pipeline(
-  tasks: Task[],
-  spawnFn: typeof import("node:child_process").spawn = spawn
-): Pipeline {
+export function pipeline(tasks: Task[]): Pipeline {
   const graph = createTaskGraph(tasks)
   graph.validate()
   graph.simplify()
 
-  return {
+  const pipelineImpl: Pipeline = {
+    andThen(next: Omit<TaskConfig, "dependencies">): Pipeline {
+      // Find exit nodes (tasks with no dependents) - these are the "last" tasks
+      const exitNodes: Task[] = []
+      for (const node of graph.nodes.values()) {
+        if (node.dependents.size === 0) {
+          exitNodes.push(node.task)
+        }
+      }
+
+      // Collect all tasks from the current pipeline
+      const allTasks: Task[] = []
+      for (const node of graph.nodes.values()) {
+        allTasks.push(node.task)
+      }
+
+      // Create a task that depends on exit nodes
+      const nextTask = task({
+        ...next,
+        dependencies: exitNodes,
+      })
+      allTasks.push(nextTask)
+
+      return pipeline(allTasks)
+    },
+    toTask(config: PipelineTaskConfig): Task {
+      validateTasks(config.dependencies)
+
+      const syntheticTask = task({
+        name: config.name,
+        commands: { dev: ":", build: ":" }, // Dummy commands (no-op)
+        cwd: ".", // Dummy cwd
+        dependencies: [...(config.dependencies || [])],
+      })
+
+      // Mark this task as a pipeline task
+      syntheticTask[$TASK_INTERNAL].pipeline = pipelineImpl
+
+      // Cache this conversion
+      let cache = pipelineTaskCache.get(pipelineImpl)
+      if (!cache) {
+        cache = new Map()
+        pipelineTaskCache.set(pipelineImpl, cache)
+      }
+      cache.set(config.name, syntheticTask)
+
+      return syntheticTask
+    },
+
     async run(config): Promise<void> {
+      const spawnFn = config?.spawn ?? spawn
       const runningTasks = new Map<number, ChildProcess>()
+      const runningPipelines = new Map<number, { stop: () => void }>()
       let failed = false
 
       const scheduler = createScheduler(graph)
@@ -45,18 +95,82 @@ export function pipeline(
           } catch {}
         }
 
-        config.onPipelineError?.(error)
+        // Stop nested pipelines
+        for (const { stop } of runningPipelines.values()) {
+          try {
+            stop()
+          } catch {}
+        }
+
+        config?.onPipelineError?.(error)
         completionRejector?.(error)
       }
 
       const startTask = (task: Task) => {
         const {
           name: taskName,
-          [$TASK_INTERNAL]: { id: taskId },
+          [$TASK_INTERNAL]: { id: taskId, pipeline: nestedPipeline },
         } = task
 
         if (runningTasks.has(taskId)) return
 
+        // Handle pipeline tasks
+        if (nestedPipeline) {
+          // Mark as ready immediately (pipeline entry nodes will handle their own ready state)
+          advanceScheduler({ type: "ready", taskId })
+
+          // Create an abort controller to stop the nested pipeline if needed
+          let pipelineStopped = false
+          const stopPipeline = () => {
+            pipelineStopped = true
+            // The nested pipeline will continue running, but we've marked it as stopped
+            // In a more sophisticated implementation, we could propagate stop signals
+          }
+
+          runningPipelines.set(taskId, { stop: stopPipeline })
+
+          // Run the nested pipeline
+          nestedPipeline
+            .run({
+              spawn: spawnFn,
+              onTaskError: (nestedTaskName, error) => {
+                if (pipelineStopped) return
+                config?.onTaskError?.(`${taskName}:${nestedTaskName}`, error)
+              },
+              onTaskComplete: (nestedTaskName) => {
+                if (pipelineStopped) return
+                config?.onTaskComplete?.(`${taskName}:${nestedTaskName}`)
+              },
+              onPipelineError: (error) => {
+                if (pipelineStopped) return
+                runningPipelines.delete(taskId)
+                const e = new Error(
+                  `[${taskName}] Pipeline failed: ${error.message}`
+                )
+                config?.onTaskError?.(taskName, e)
+                failPipeline(e)
+              },
+              onPipelineComplete: () => {
+                if (pipelineStopped) return
+                runningPipelines.delete(taskId)
+                config?.onTaskComplete?.(taskName)
+                advanceScheduler({ type: "complete", taskId })
+              },
+            })
+            .catch((error) => {
+              if (pipelineStopped) return
+              runningPipelines.delete(taskId)
+              const e = new Error(
+                `[${taskName}] Pipeline failed: ${error.message}`
+              )
+              config?.onTaskError?.(taskName, e)
+              failPipeline(e)
+            })
+
+          return
+        }
+
+        // Regular task execution
         const command =
           process.env.NODE_ENV === "production"
             ? task[$TASK_INTERNAL].commands.build
@@ -72,7 +186,7 @@ export function pipeline(
           const e = new Error(
             `[${taskName}] Working directory does not exist: ${taskCwd}`
           )
-          config.onTaskError?.(taskName, e)
+          config?.onTaskError?.(taskName, e)
           failPipeline(e)
           return
         }
@@ -125,7 +239,7 @@ export function pipeline(
 
         child.on("error", (error) => {
           const e = new Error(`[${taskName}] Failed to start: ${error.message}`)
-          config.onTaskError?.(taskName, e)
+          config?.onTaskError?.(taskName, e)
           failPipeline(e)
         })
 
@@ -136,12 +250,12 @@ export function pipeline(
             const e = new Error(
               `[${taskName}] Task failed with exit code ${code ?? 1}`
             )
-            config.onTaskError?.(taskName, e)
+            config?.onTaskError?.(taskName, e)
             failPipeline(e)
             return
           }
 
-          config.onTaskComplete?.(taskName)
+          config?.onTaskComplete?.(taskName)
 
           // 🔑 Notify scheduler and drain newly runnable tasks
           advanceScheduler({ type: "complete", taskId })
@@ -156,7 +270,7 @@ export function pipeline(
           const isFinished = result.done && result.value.type === "done"
 
           if (isFinished) {
-            config.onPipelineComplete?.()
+            config?.onPipelineComplete?.()
             completionResolver?.()
             return
           }
@@ -194,4 +308,6 @@ export function pipeline(
       })
     },
   }
+
+  return pipelineImpl
 }

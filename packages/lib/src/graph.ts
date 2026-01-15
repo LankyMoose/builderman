@@ -1,8 +1,11 @@
 import { $TASK_INTERNAL } from "./constants.js"
+import { validateTasks } from "./util.js"
 import type { TaskNode, TaskGraph, Task } from "./types.js"
 
 export function createTaskGraph(tasks: Task[]): TaskGraph {
   const nodes = new Map<number, TaskNode>()
+
+  validateTasks(tasks)
 
   // Create nodes for all tasks
   for (const task of tasks) {
