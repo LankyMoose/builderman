@@ -13,14 +13,10 @@ export interface TaskConfig {
   dependencies?: Task[]
 }
 
-interface TaskInternal extends TaskConfig {
+interface TaskInternal extends Omit<TaskConfig, "isReady"> {
   id: number
-  readyPromise: Promise<void>
   dependencies: Task[]
-  isReady: (stdout: string) => boolean
-  isComplete: () => boolean
-  markReady: () => void
-  markComplete: () => void
+  shouldStdoutMarkReady?: (stdout: string) => boolean
 }
 
 export interface Task {

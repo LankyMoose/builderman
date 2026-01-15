@@ -62,7 +62,7 @@ export function pipeline(
             ? task[$TASK_INTERNAL].commands.build
             : task[$TASK_INTERNAL].commands.dev
 
-        const { cwd, isReady, markReady, markComplete } = task[$TASK_INTERNAL]
+        const { cwd, shouldStdoutMarkReady } = task[$TASK_INTERNAL]
 
         const taskCwd = path.isAbsolute(cwd)
           ? cwd
@@ -100,8 +100,10 @@ export function pipeline(
 
         runningTasks.set(taskId, child)
 
-        if (!isReady) {
-          markReady()
+        let didMarkReady = false
+        if (!shouldStdoutMarkReady) {
+          advanceScheduler({ type: "ready", taskId })
+          didMarkReady = true
         }
 
         let output = ""
@@ -111,8 +113,9 @@ export function pipeline(
           output += chunk
           process.stdout.write(chunk)
 
-          if (isReady && isReady(output)) {
-            markReady()
+          if (!didMarkReady && shouldStdoutMarkReady!(output)) {
+            advanceScheduler({ type: "ready", taskId })
+            didMarkReady = true
           }
         })
 
@@ -138,7 +141,6 @@ export function pipeline(
             return
           }
 
-          markComplete()
           config.onTaskComplete?.(taskName)
 
           // 🔑 Notify scheduler and drain newly runnable tasks
@@ -149,8 +151,15 @@ export function pipeline(
       const advanceScheduler = (input?: SchedulerInput) => {
         let result = input ? scheduler.next(input) : scheduler.next()
 
-        while (!result.done) {
+        while (true) {
           const event = result.value
+          const isFinished = result.done && result.value.type === "done"
+
+          if (isFinished) {
+            config.onPipelineComplete?.()
+            completionResolver?.()
+            return
+          }
 
           if (event.type === "run") {
             startTask(graph.nodes.get(event.taskId)!.task)
@@ -161,26 +170,28 @@ export function pipeline(
           if (event.type === "idle") {
             return
           }
-
-          if (event.type === "done") {
-            config.onPipelineComplete?.()
-            completionResolver?.()
-            return
-          }
         }
       }
 
       // Handle termination signals
-      ;["SIGINT", "SIGTERM", "SIGQUIT", "SIGBREAK"].forEach((signal) => {
-        process.once(signal, () => {
-          failPipeline(new Error(`Received ${signal}`))
-        })
-      })
+      const cleanups = ["SIGINT", "SIGTERM", "SIGQUIT", "SIGBREAK"].map(
+        (signal) => {
+          const handleSignal = () => {
+            failPipeline(new Error(`Received ${signal}`))
+          }
+          process.once(signal, handleSignal)
+          return () => {
+            process.removeListener(signal, handleSignal)
+          }
+        }
+      )
 
       // 🚀 Kick off initial runnable tasks
       advanceScheduler()
 
-      await completionPromise
+      await completionPromise.finally(() => {
+        cleanups.forEach((cleanup) => cleanup())
+      })
     },
   }
 }

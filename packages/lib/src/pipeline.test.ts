@@ -346,4 +346,270 @@ describe("pipeline", () => {
 
     assert.ok(pipelineCompleteCalled)
   })
+
+  it("waits for task with isReady before starting dependent task", async () => {
+    const executionOrder: string[] = []
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+      cwd: ".",
+      isReady: (output) => output.includes("READY"),
+    })
+    const task2 = task({
+      name: "task2",
+      commands: { dev: "echo task2", build: "echo task2" },
+      cwd: ".",
+      dependencies: [task1],
+    })
+
+    const mockSpawn = mock.fn((command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      if (command.includes("task1")) {
+        executionOrder.push("task1:started")
+        // Emit stdout that doesn't match ready condition
+        setImmediate(() => {
+          mockProcess.stdout?.emit("data", Buffer.from("Starting...\n"))
+        })
+        // Then emit ready condition after a delay
+        setTimeout(() => {
+          executionOrder.push("task1:before-ready")
+          mockProcess.stdout?.emit("data", Buffer.from("READY\n"))
+          executionOrder.push("task1:after-ready")
+        }, 10)
+        // Complete after ready
+        setTimeout(() => {
+          mockProcess.emit("exit", 0)
+          executionOrder.push("task1:complete")
+        }, 20)
+      } else if (command.includes("task2")) {
+        executionOrder.push("task2:started")
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+          executionOrder.push("task2:complete")
+        })
+      }
+
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1, task2], mockSpawn as any)
+    await pipe.run({
+      onTaskComplete: (name) => {
+        executionOrder.push(`complete:${name}`)
+      },
+    })
+
+    // task1 should start first
+    assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
+    // task1 should become ready before task2 starts
+    // The ready event is processed synchronously when stdout emits
+    // task1:before-ready is pushed before emitting, task2:started happens during emission processing,
+    // and task1:after-ready is pushed after emitting
+    // So the order should be: task1:before-ready, task2:started, task1:after-ready
+    const task1BeforeReadyIndex = executionOrder.indexOf("task1:before-ready")
+    const task2StartedIndex = executionOrder.indexOf("task2:started")
+    const task1AfterReadyIndex = executionOrder.indexOf("task1:after-ready")
+    assert.ok(task1BeforeReadyIndex < task2StartedIndex, "task2 should start after task1 ready event is triggered")
+    assert.ok(task2StartedIndex < task1AfterReadyIndex, "task2 starts during ready event processing")
+  })
+
+  it("starts dependent task immediately when task has no isReady", async () => {
+    const executionOrder: string[] = []
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+      cwd: ".",
+    })
+    const task2 = task({
+      name: "task2",
+      commands: { dev: "echo task2", build: "echo task2" },
+      cwd: ".",
+      dependencies: [task1],
+    })
+
+    const mockSpawn = mock.fn((command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      if (command.includes("task1")) {
+        executionOrder.push("task1:started")
+        // Delay completion
+        setTimeout(() => {
+          mockProcess.emit("exit", 0)
+          executionOrder.push("task1:complete")
+        }, 50)
+      } else if (command.includes("task2")) {
+        executionOrder.push("task2:started")
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+          executionOrder.push("task2:complete")
+        })
+      }
+
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1, task2], mockSpawn as any)
+    await pipe.run({})
+
+    // task1 should start first
+    assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
+    // task2 should start immediately after task1 (no waiting for ready or completion)
+    // Since task1 has no isReady, it's marked as ready immediately when it starts,
+    // so task2 should start right away
+    const task1StartedIndex = executionOrder.indexOf("task1:started")
+    const task2StartedIndex = executionOrder.indexOf("task2:started")
+    // task2 should start very soon after task1 (they should be close in execution order)
+    assert.ok(task2StartedIndex > task1StartedIndex, "task2 should start after task1")
+    // The key is that task2 starts without waiting for task1 to complete
+    // (completion order may vary due to timing, but starting order is what matters)
+    assert.ok(task2StartedIndex === task1StartedIndex + 1, "task2 should start immediately after task1 (no delay)")
+  })
+
+  it("starts multiple dependents when task with isReady becomes ready", async () => {
+    const executionOrder: string[] = []
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+      cwd: ".",
+      isReady: (output) => output.includes("READY"),
+    })
+    const task2 = task({
+      name: "task2",
+      commands: { dev: "echo task2", build: "echo task2" },
+      cwd: ".",
+      dependencies: [task1],
+    })
+    const task3 = task({
+      name: "task3",
+      commands: { dev: "echo task3", build: "echo task3" },
+      cwd: ".",
+      dependencies: [task1],
+    })
+
+    const mockSpawn = mock.fn((command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      if (command.includes("task1")) {
+        executionOrder.push("task1:started")
+        setTimeout(() => {
+          executionOrder.push("task1:before-ready")
+          mockProcess.stdout?.emit("data", Buffer.from("READY\n"))
+          executionOrder.push("task1:after-ready")
+        }, 10)
+        setTimeout(() => {
+          mockProcess.emit("exit", 0)
+        }, 20)
+      } else if (command.includes("task2")) {
+        executionOrder.push("task2:started")
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+      } else if (command.includes("task3")) {
+        executionOrder.push("task3:started")
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+      }
+
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1, task2, task3], mockSpawn as any)
+    await pipe.run({})
+
+    // task1 should start first
+    assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
+    // task1 should become ready
+    const task1BeforeReadyIndex = executionOrder.indexOf("task1:before-ready")
+    assert.ok(task1BeforeReadyIndex > 0, "task1 should become ready")
+    // Both task2 and task3 should start after task1 ready event is triggered
+    const task2StartedIndex = executionOrder.indexOf("task2:started")
+    const task3StartedIndex = executionOrder.indexOf("task3:started")
+    assert.ok(task2StartedIndex > task1BeforeReadyIndex, "task2 should start after task1 ready event is triggered")
+    assert.ok(task3StartedIndex > task1BeforeReadyIndex, "task3 should start after task1 ready event is triggered")
+  })
+
+  it("waits for all dependencies with isReady before starting dependent task", async () => {
+    const executionOrder: string[] = []
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+      cwd: ".",
+      isReady: (output) => output.includes("TASK1_READY"),
+    })
+    const task2 = task({
+      name: "task2",
+      commands: { dev: "echo task2", build: "echo task2" },
+      cwd: ".",
+      isReady: (output) => output.includes("TASK2_READY"),
+    })
+    const task3 = task({
+      name: "task3",
+      commands: { dev: "echo task3", build: "echo task3" },
+      cwd: ".",
+      dependencies: [task1, task2],
+    })
+
+    const mockSpawn = mock.fn((command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      if (command.includes("task1")) {
+        executionOrder.push("task1:started")
+        setTimeout(() => {
+          executionOrder.push("task1:before-ready")
+          mockProcess.stdout?.emit("data", Buffer.from("TASK1_READY\n"))
+          executionOrder.push("task1:after-ready")
+        }, 10)
+        setTimeout(() => {
+          mockProcess.emit("exit", 0)
+        }, 30)
+      } else if (command.includes("task2")) {
+        executionOrder.push("task2:started")
+        setTimeout(() => {
+          executionOrder.push("task2:before-ready")
+          mockProcess.stdout?.emit("data", Buffer.from("TASK2_READY\n"))
+          executionOrder.push("task2:after-ready")
+        }, 20)
+        setTimeout(() => {
+          mockProcess.emit("exit", 0)
+        }, 40)
+      } else if (command.includes("task3")) {
+        executionOrder.push("task3:started")
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+      }
+
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1, task2, task3], mockSpawn as any)
+    await pipe.run({})
+
+    // task1 and task2 should start (order doesn't matter)
+    assert.ok(executionOrder.includes("task1:started"))
+    assert.ok(executionOrder.includes("task2:started"))
+    // Both should become ready
+    assert.ok(executionOrder.includes("task1:before-ready"))
+    assert.ok(executionOrder.includes("task2:before-ready"))
+    // task3 should start only after both ready events are triggered
+    const task1BeforeReadyIndex = executionOrder.indexOf("task1:before-ready")
+    const task2BeforeReadyIndex = executionOrder.indexOf("task2:before-ready")
+    const task3StartedIndex = executionOrder.indexOf("task3:started")
+    const lastReadyIndex = Math.max(task1BeforeReadyIndex, task2BeforeReadyIndex)
+    assert.ok(task3StartedIndex > lastReadyIndex, "task3 should start after both dependencies' ready events are triggered")
+  })
 })
