@@ -1,4 +1,4 @@
-# **%PACKAGE-NAME%**
+# **builderman**
 
 #### _An awesome new package._
 

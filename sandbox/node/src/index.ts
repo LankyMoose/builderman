@@ -1,4 +1,4 @@
-import { add } from "%PACKAGE-NAME%"
+import { add } from "builderman"
 
 function main() {
   console.log(add(1, 2))
