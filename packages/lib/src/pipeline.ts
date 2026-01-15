@@ -1,235 +1,186 @@
 import { spawn, ChildProcess } from "node:child_process"
-import { EventEmitter } from "node:events"
 import * as path from "node:path"
 import * as fs from "node:fs"
 
-import type { Pipeline, Task } from "./types.js"
 import { $TASK_INTERNAL } from "./constants.js"
+import { createTaskGraph } from "./graph.js"
+import { createScheduler, SchedulerInput } from "./scheduler.js"
+import type { Pipeline, Task } from "./types.js"
 
 /**
  * Creates a pipeline that manages task execution with dependency-based coordination.
+ * @param tasks - Array of tasks to execute
+ * @param spawnFn - Optional spawn function for testing (defaults to node:child_process spawn)
  */
-export function pipeline(tasks: Task[]): Pipeline {
+
+export function pipeline(
+  tasks: Task[],
+  spawnFn: typeof import("node:child_process").spawn = spawn
+): Pipeline {
+  const graph = createTaskGraph(tasks)
+  graph.validate()
+  graph.simplify()
+
   return {
-    run(config): Promise<void> {
-      return new Promise((resolvePipeline, rejectPipeline) => {
-        let hasFailed = false
+    async run(config): Promise<void> {
+      const runningTasks = new Map<number, ChildProcess>()
+      let failed = false
 
-        // Function to fail the pipeline and kill all running tasks
-        const failPipeline = (error: Error) => {
-          if (hasFailed) return
-          hasFailed = true
+      const scheduler = createScheduler(graph)
 
-          // Kill all running tasks
-          for (const child of runningTasks.values()) {
-            try {
-              child.kill("SIGTERM")
-            } catch (e) {
-              // Ignore errors when killing
-            }
-          }
+      let completionResolver: (() => void) | null = null
+      let completionRejector: ((error: Error) => void) | null = null
+      const completionPromise = new Promise<void>((resolve, reject) => {
+        completionResolver = resolve
+        completionRejector = reject
+      })
 
-          rejectPipeline(error)
+      const failPipeline = (error: Error) => {
+        if (failed) return
+        failed = true
+
+        for (const child of runningTasks.values()) {
+          try {
+            child.kill("SIGTERM")
+          } catch {}
         }
 
-        const eventEmitter = new EventEmitter<{
-          taskReady: [taskName: string]
-          taskCompleted: [taskName: string]
-        }>()
-        const runningTasks = new Map<string, ChildProcess>()
-        const completedTasks = new Set<string>()
-        const readyTasks = new Set<string>()
+        config.onPipelineError?.(error)
+        completionRejector?.(error)
+      }
 
-        const isProduction = process.env.NODE_ENV === "production"
-        const getCommand = (task: Task): string => {
-          return isProduction
+      const startTask = (task: Task) => {
+        const {
+          name: taskName,
+          [$TASK_INTERNAL]: { id: taskId },
+        } = task
+
+        if (runningTasks.has(taskId)) return
+
+        const command =
+          process.env.NODE_ENV === "production"
             ? task[$TASK_INTERNAL].commands.build
             : task[$TASK_INTERNAL].commands.dev
-        }
 
-        const canStart = async (task: Task): Promise<boolean> => {
-          if (runningTasks.has(task.name) || completedTasks.has(task.name)) {
-            return false
-          }
+        const { cwd, isReady, markReady, markComplete } = task[$TASK_INTERNAL]
 
-          const { dependencies } = task[$TASK_INTERNAL]
+        const taskCwd = path.isAbsolute(cwd)
+          ? cwd
+          : path.resolve(process.cwd(), cwd)
 
-          if (!dependencies || dependencies.length === 0) {
-            return true
-          }
-
-          await Promise.all(
-            dependencies.map((task) => task[$TASK_INTERNAL].readyPromise)
+        if (!fs.existsSync(taskCwd)) {
+          const e = new Error(
+            `[${taskName}] Working directory does not exist: ${taskCwd}`
           )
-          return true
+          config.onTaskError?.(taskName, e)
+          failPipeline(e)
+          return
         }
 
-        const startTask = (task: Task) => {
-          if (runningTasks.has(task.name)) {
-            return
-          }
+        const accumulatedPath = [
+          path.join(taskCwd, "node_modules", ".bin"),
+          path.join(process.cwd(), "node_modules", ".bin"),
+          process.env.PATH,
+        ]
+          .filter(Boolean)
+          .join(process.platform === "win32" ? ";" : ":")
 
-          const command = getCommand(task)
-          const {
-            cwd,
-            isReady: getIsReady,
-            markComplete,
-            markReady,
-          } = task[$TASK_INTERNAL]
-
-          // Ensure node_modules/.bin is in PATH for local dependencies
-          const taskCwd = path.isAbsolute(cwd)
-            ? cwd
-            : path.resolve(process.cwd(), cwd)
-          const localBinPath = path.join(taskCwd, "node_modules", ".bin")
-
-          // Build PATH with local node_modules/.bin first
-          const existingPath = process.env.PATH || process.env.Path || ""
-          const pathSeparator = process.platform === "win32" ? ";" : ":"
-
-          const binPaths: string[] = [localBinPath]
-
-          const rootBinPath = path.join(process.cwd(), "node_modules", ".bin")
-          if (rootBinPath !== localBinPath) {
-            binPaths.push(rootBinPath)
-          }
-
-          if (existingPath) {
-            binPaths.push(existingPath)
-          }
-
-          const newPath = binPaths.join(pathSeparator)
-
-          const env = {
-            ...process.env,
-            PATH: newPath,
-            Path: newPath,
-          }
-
-          // Validate that the cwd exists
-          if (!fs.existsSync(taskCwd)) {
-            const error = new Error(
-              `[${task.name}] Working directory does not exist: ${taskCwd}`
-            )
-            config.onTaskError?.(task.name, error)
-            failPipeline(error)
-            return
-          }
-
-          // Use the resolved absolute path for cwd
-          const child = spawn(command, {
-            cwd: taskCwd,
-            stdio: ["inherit", "pipe", "pipe"],
-            shell: true,
-            env,
-          })
-
-          // Handle spawn errors
-          child.on("error", (error) => {
-            const errorMsg = `[${task.name}] Failed to start: ${error.message}\n  Command: ${command}\n  CWD: ${taskCwd}`
-            const e = new Error(errorMsg)
-            config.onTaskError?.(task.name, e)
-            failPipeline(e)
-          })
-
-          runningTasks.set(task.name, child)
-
-          // If task doesn't have getIsReady, mark as ready immediately
-          if (!getIsReady) {
-            readyTasks.add(task.name)
-            markReady()
-            eventEmitter.emit("taskReady", task.name)
-          }
-
-          // Monitor stdout for readiness
-          let stdoutBuffer = ""
-          let allOutput = ""
-
-          child.stdout?.on("data", (data: Buffer) => {
-            const chunk = data.toString()
-            allOutput += chunk
-            stdoutBuffer += chunk
-            const lines = stdoutBuffer.split("\n")
-            stdoutBuffer = lines.pop() || ""
-
-            for (const line of lines) {
-              // Check if task is ready based on readyOn callback
-              if (getIsReady && !readyTasks.has(task.name)) {
-                if (getIsReady(allOutput)) {
-                  readyTasks.add(task.name)
-                  markReady()
-                  eventEmitter.emit("taskReady", task.name)
-                }
-              }
-
-              // Forward stdout to parent
-              process.stdout.write(line + "\n")
-            }
-          })
-
-          // Forward any remaining buffer on end
-          child.stdout?.on("end", () => {
-            if (stdoutBuffer) {
-              process.stdout.write(stdoutBuffer)
-            }
-          })
-
-          // Forward stderr
-          child.stderr?.on("data", (data: Buffer) => {
-            process.stderr.write(data)
-          })
-
-          // Handle task completion
-          child.on("exit", (code) => {
-            runningTasks.delete(task.name)
-            completedTasks.add(task.name)
-
-            if (code !== 0) {
-              const error = new Error(
-                `[${task.name}] Task failed with exit code ${code || 1}`
-              )
-              config.onTaskError?.(task.name, error)
-              failPipeline(error)
-            } else {
-              markComplete()
-              eventEmitter.emit("taskCompleted", task.name)
-              config.onTaskComplete?.(task.name)
-            }
-          })
+        const env = {
+          ...process.env,
+          PATH: accumulatedPath,
+          Path: accumulatedPath,
         }
 
-        const tryStartTasks = async () => {
-          for (const task of tasks) {
-            if (await canStart(task)) {
-              startTask(task)
-            }
-          }
-        }
-
-        // Function to check completion (only resolve if no failures)
-        const checkCompletion = () => {
-          if (completedTasks.size === tasks.length && !hasFailed) {
-            config.onPipelineComplete?.()
-            resolvePipeline()
-          }
-        }
-
-        // Handle process termination
-        ;["SIGINT", "SIGBREAK", "SIGTERM", "SIGQUIT"].forEach((signal) => {
-          process.once(signal, () => {
-            const e = new Error(
-              `Received ${signal} signal during pipeline execution`
-            )
-            config.onPipelineError?.(e)
-            failPipeline(e)
-          })
+        const child = spawnFn(command, {
+          cwd: taskCwd,
+          stdio: ["inherit", "pipe", "pipe"],
+          shell: true,
+          env,
         })
 
-        eventEmitter.on("taskReady", tryStartTasks)
-        eventEmitter.on("taskCompleted", tryStartTasks)
-        eventEmitter.on("taskCompleted", checkCompletion)
-        tryStartTasks().catch(failPipeline)
+        runningTasks.set(taskId, child)
+
+        if (!isReady) {
+          markReady()
+        }
+
+        let output = ""
+
+        child.stdout?.on("data", (buf) => {
+          const chunk = buf.toString()
+          output += chunk
+          process.stdout.write(chunk)
+
+          if (isReady && isReady(output)) {
+            markReady()
+          }
+        })
+
+        child.stderr?.on("data", (buf) => {
+          process.stderr.write(buf)
+        })
+
+        child.on("error", (error) => {
+          const e = new Error(`[${taskName}] Failed to start: ${error.message}`)
+          config.onTaskError?.(taskName, e)
+          failPipeline(e)
+        })
+
+        child.on("exit", (code) => {
+          runningTasks.delete(taskId)
+
+          if (code !== 0) {
+            const e = new Error(
+              `[${taskName}] Task failed with exit code ${code ?? 1}`
+            )
+            config.onTaskError?.(taskName, e)
+            failPipeline(e)
+            return
+          }
+
+          markComplete()
+          config.onTaskComplete?.(taskName)
+
+          // 🔑 Notify scheduler and drain newly runnable tasks
+          advanceScheduler({ type: "complete", taskId })
+        })
+      }
+
+      const advanceScheduler = (input?: SchedulerInput) => {
+        let result = input ? scheduler.next(input) : scheduler.next()
+
+        while (!result.done) {
+          const event = result.value
+
+          if (event.type === "run") {
+            startTask(graph.nodes.get(event.taskId)!.task)
+            result = scheduler.next()
+            continue
+          }
+
+          if (event.type === "idle") {
+            return
+          }
+
+          if (event.type === "done") {
+            config.onPipelineComplete?.()
+            completionResolver?.()
+            return
+          }
+        }
+      }
+
+      // Handle termination signals
+      ;["SIGINT", "SIGTERM", "SIGQUIT", "SIGBREAK"].forEach((signal) => {
+        process.once(signal, () => {
+          failPipeline(new Error(`Received ${signal}`))
+        })
       })
+
+      // 🚀 Kick off initial runnable tasks
+      advanceScheduler()
+
+      await completionPromise
     },
   }
 }

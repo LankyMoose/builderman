@@ -1,4 +1,4 @@
-export * from "./task.js"
-export * from "./pipeline.js"
+export { task } from "./task.js"
+export { pipeline } from "./pipeline.js"
 
 export type { Task, Pipeline, TaskConfig } from "./types.js"
