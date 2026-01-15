@@ -1,7 +1,3 @@
-import { emit } from "builderman"
-
-function main() {
-  emit("test")
-}
+function main() {}
 
 main()
