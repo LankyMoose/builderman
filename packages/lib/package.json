@@ -15,5 +15,8 @@
   },
   "keywords": [],
   "author": "LankyMoose",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.0.8"
+  }
 }

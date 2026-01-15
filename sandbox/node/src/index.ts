@@ -1,7 +1,7 @@
-import { add } from "builderman"
+import { emit } from "builderman"
 
 function main() {
-  console.log(add(1, 2))
+  emit("test")
 }
 
 main()

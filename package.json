@@ -1,0 +1,8 @@
+{
+  "name": "builderman",
+  "scripts": {
+    "dev": "pnpm --filter ./packages/* run -r dev",
+    "build": "pnpm --filter ./packages/* run -r build"
+  },
+  "packageManager": "pnpm@10.20.0"
+}
