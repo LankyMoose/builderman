@@ -18,6 +18,12 @@ const pipelineTasksCache = new WeakMap<Pipeline, Task[]>()
 
 /**
  * Creates a pipeline that manages task execution with dependency-based coordination.
+ * @param tasks - The tasks to include in the pipeline.
+ * @returns A pipeline that can be used to execute the tasks.
+ * @example
+ * const task1 = task({ name: "task1", commands: { dev: "echo task1" }, cwd: "." })
+ * const task2 = task({ name: "task2", commands: { dev: "echo task2" }, cwd: ".", dependencies: [task1] })
+ * await pipeline([task1, task2]).run()
  */
 export function pipeline(tasks: Task[]): Pipeline {
   const graph = createTaskGraph(tasks)

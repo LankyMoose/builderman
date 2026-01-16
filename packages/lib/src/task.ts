@@ -7,6 +7,17 @@ let taskId = 0
 
 /**
  * Creates a task configuration.
+ * @param config - The configuration for the task.
+ * @returns A task instance.
+ * @example
+ * const build = task({ name: "build", commands: { build: "npm run build" }, cwd: "." })
+ * const deploy = task({ name: "deploy", commands: { build: "npm run deploy" }, cwd: ".", dependencies: [build] })
+ * await pipeline([build, deploy]).run()
+ *
+ * // alternatively, you can use the andThen method to chain tasks together:
+ * const buildAndDeploy = task({ name: "build", commands: { build: "npm run build" }, cwd: "." })
+ *   .andThen({ name: "deploy", commands: { build: "npm run deploy" }, cwd: "." })
+ * await buildAndDeploy.run()
  */
 export function task(config: TaskConfig): Task {
   validateTasks(config.dependencies)

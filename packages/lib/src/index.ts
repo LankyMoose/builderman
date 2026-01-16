@@ -7,5 +7,7 @@ export type {
   TaskConfig,
   Command,
   CommandConfig,
+  Commands,
   PipelineRunConfig,
+  PipelineTaskConfig,
 } from "./types.js"
