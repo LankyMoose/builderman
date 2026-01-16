@@ -5,7 +5,7 @@ import type { ChildProcess } from "node:child_process"
 
 import { $TASK_INTERNAL } from "./constants.js"
 import { createTaskGraph } from "./graph.js"
-import { pipeline } from "./pipeline.js"
+import { pipeline, PipelineError } from "./pipeline.js"
 import { task } from "./task.js"
 
 describe("createTaskGraph", () => {
@@ -240,26 +240,16 @@ describe("pipeline", () => {
       dependencies: [task1],
     })
 
-    // Mock spawn to track execution
-    const mockSpawn = mock.fn((command: string) => {
+    // Mock spawn to simulate immediate completion
+    const mockSpawn = mock.fn((_command: string) => {
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
       mockProcess.stderr = new EventEmitter() as any
 
-      // Extract task name from command
-      if (command.includes("task1")) {
-        executionOrder.push("task1")
-        // Simulate immediate completion
-        setImmediate(() => {
-          mockProcess.emit("exit", 0)
-        })
-      } else if (command.includes("task2")) {
-        executionOrder.push("task2")
-        setImmediate(() => {
-          mockProcess.emit("exit", 0)
-        })
-      }
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+      })
 
       return mockProcess
     })
@@ -267,6 +257,9 @@ describe("pipeline", () => {
     const pipe = pipeline([task1, task2])
     await pipe.run({
       spawn: mockSpawn as any,
+      onTaskBegin: (name) => {
+        executionOrder.push(name)
+      },
       onTaskComplete: (name) => {
         executionOrder.push(`complete:${name}`)
       },
@@ -304,9 +297,12 @@ describe("pipeline", () => {
     await pipe
       .run({
         spawn: mockSpawn as any,
-        onTaskError: (name, error) => {
-          assert.strictEqual(name, "task1")
-          assert.ok(error.message.includes("exit code"))
+        onPipelineError: (error) => {
+          assert.strictEqual(error.code, PipelineError.TaskFailed)
+          assert.strictEqual(
+            error.message,
+            "[task1] Task failed with exit code 1"
+          )
           errorCaught = true
         },
       })
@@ -372,7 +368,6 @@ describe("pipeline", () => {
       mockProcess.stderr = new EventEmitter() as any
 
       if (command.includes("task1")) {
-        executionOrder.push("task1:started")
         // Emit stdout that doesn't match ready condition
         setImmediate(() => {
           mockProcess.stdout?.emit("data", Buffer.from("Starting...\n"))
@@ -386,13 +381,10 @@ describe("pipeline", () => {
         // Complete after ready
         setTimeout(() => {
           mockProcess.emit("exit", 0)
-          executionOrder.push("task1:complete")
         }, 20)
       } else if (command.includes("task2")) {
-        executionOrder.push("task2:started")
         setImmediate(() => {
           mockProcess.emit("exit", 0)
-          executionOrder.push("task2:complete")
         })
       }
 
@@ -402,8 +394,8 @@ describe("pipeline", () => {
     const pipe = pipeline([task1, task2])
     await pipe.run({
       spawn: mockSpawn as any,
-      onTaskComplete: (name) => {
-        executionOrder.push(`complete:${name}`)
+      onTaskBegin: (name) => {
+        executionOrder.push(`${name}:started`)
       },
     })
 
@@ -448,17 +440,13 @@ describe("pipeline", () => {
       mockProcess.stderr = new EventEmitter() as any
 
       if (command.includes("task1")) {
-        executionOrder.push("task1:started")
         // Delay completion
         setTimeout(() => {
           mockProcess.emit("exit", 0)
-          executionOrder.push("task1:complete")
         }, 50)
       } else if (command.includes("task2")) {
-        executionOrder.push("task2:started")
         setImmediate(() => {
           mockProcess.emit("exit", 0)
-          executionOrder.push("task2:complete")
         })
       }
 
@@ -468,6 +456,9 @@ describe("pipeline", () => {
     const pipe = pipeline([task1, task2])
     await pipe.run({
       spawn: mockSpawn as any,
+      onTaskBegin: (name) => {
+        executionOrder.push(`${name}:started`)
+      },
     })
 
     // task1 should start first
@@ -475,19 +466,9 @@ describe("pipeline", () => {
     // task2 should start immediately after task1 (no waiting for ready or completion)
     // Since task1 has no isReady, it's marked as ready immediately when it starts,
     // so task2 should start right away
-    const task1StartedIndex = executionOrder.indexOf("task1:started")
     const task2StartedIndex = executionOrder.indexOf("task2:started")
     // task2 should start very soon after task1 (they should be close in execution order)
-    assert.ok(
-      task2StartedIndex > task1StartedIndex,
-      "task2 should start after task1"
-    )
-    // The key is that task2 starts without waiting for task1 to complete
-    // (completion order may vary due to timing, but starting order is what matters)
-    assert.ok(
-      task2StartedIndex === task1StartedIndex + 1,
-      "task2 should start immediately after task1 (no delay)"
-    )
+    assert.ok(task2StartedIndex === 1, "task2 should start after task1")
   })
 
   it("starts multiple dependents when task with isReady becomes ready", async () => {
@@ -518,7 +499,6 @@ describe("pipeline", () => {
       mockProcess.stderr = new EventEmitter() as any
 
       if (command.includes("task1")) {
-        executionOrder.push("task1:started")
         setTimeout(() => {
           executionOrder.push("task1:before-ready")
           mockProcess.stdout?.emit("data", Buffer.from("READY\n"))
@@ -528,12 +508,10 @@ describe("pipeline", () => {
           mockProcess.emit("exit", 0)
         }, 20)
       } else if (command.includes("task2")) {
-        executionOrder.push("task2:started")
         setImmediate(() => {
           mockProcess.emit("exit", 0)
         })
       } else if (command.includes("task3")) {
-        executionOrder.push("task3:started")
         setImmediate(() => {
           mockProcess.emit("exit", 0)
         })
@@ -545,6 +523,9 @@ describe("pipeline", () => {
     const pipe = pipeline([task1, task2, task3])
     await pipe.run({
       spawn: mockSpawn as any,
+      onTaskBegin: (name) => {
+        executionOrder.push(`${name}:started`)
+      },
     })
 
     // task1 should start first
@@ -593,7 +574,6 @@ describe("pipeline", () => {
       mockProcess.stderr = new EventEmitter() as any
 
       if (command.includes("task1")) {
-        executionOrder.push("task1:started")
         setTimeout(() => {
           executionOrder.push("task1:before-ready")
           mockProcess.stdout?.emit("data", Buffer.from("TASK1_READY\n"))
@@ -603,7 +583,6 @@ describe("pipeline", () => {
           mockProcess.emit("exit", 0)
         }, 30)
       } else if (command.includes("task2")) {
-        executionOrder.push("task2:started")
         setTimeout(() => {
           executionOrder.push("task2:before-ready")
           mockProcess.stdout?.emit("data", Buffer.from("TASK2_READY\n"))
@@ -613,7 +592,6 @@ describe("pipeline", () => {
           mockProcess.emit("exit", 0)
         }, 40)
       } else if (command.includes("task3")) {
-        executionOrder.push("task3:started")
         setImmediate(() => {
           mockProcess.emit("exit", 0)
         })
@@ -625,6 +603,9 @@ describe("pipeline", () => {
     const pipe = pipeline([task1, task2, task3])
     await pipe.run({
       spawn: mockSpawn as any,
+      onTaskBegin: (name) => {
+        executionOrder.push(`${name}:started`)
+      },
     })
 
     // task1 and task2 should start (order doesn't matter)
@@ -646,26 +627,146 @@ describe("pipeline", () => {
       "task3 should start after both dependencies' ready events are triggered"
     )
   })
+
+  it("cancels pipeline when abort signal is triggered", async () => {
+    const abortController = new AbortController()
+    let taskKilled = false
+    let pipelineErrorCalled = false
+    let pipelineError: PipelineError | undefined
+
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "sleep 1", build: "sleep 1" },
+      cwd: ".",
+    })
+
+    const task2 = task({
+      name: "task2",
+      commands: { dev: "sleep 1", build: "sleep 1" },
+      cwd: ".",
+      dependencies: [task1], // task2 depends on task1, so it starts after task1 completes
+    })
+
+    let spawnCallCount = 0
+    let task2Started = false
+
+    const mockSpawn = mock.fn((_command: string) => {
+      const mockProcess = new EventEmitter() as ChildProcess
+      const isTask1 = spawnCallCount === 0
+      spawnCallCount++
+
+      if (!isTask1) {
+        task2Started = true
+      }
+
+      mockProcess.kill = mock.fn((signal?: string | number) => {
+        if (!isTask1) {
+          taskKilled = true
+        }
+        // Simulate process termination after kill
+        setImmediate(() => {
+          mockProcess.emit("exit", signal === "SIGTERM" ? null : 1)
+        })
+      }) as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+
+      // task1 completes immediately, task2 waits to be killed
+      if (isTask1) {
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+      }
+      // task2 doesn't auto-complete - it will be killed when signal is aborted
+
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1, task2])
+    const completedTasks: string[] = []
+
+    const runPromise = pipe.run({
+      spawn: mockSpawn as any,
+      signal: abortController.signal,
+      onTaskComplete: (name) => {
+        completedTasks.push(name)
+        if (name === "task1") {
+          // Wait a bit to ensure task2 starts, then abort
+          setTimeout(() => {
+            abortController.abort()
+          }, 5)
+        }
+      },
+      onPipelineError: (error) => {
+        pipelineErrorCalled = true
+        pipelineError = error
+      },
+    })
+
+    try {
+      await runPromise
+    } catch (error) {
+      // Expected to reject when signal is aborted
+    }
+
+    // Wait a bit for all async operations to complete
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    assert.ok(completedTasks.length === 1, "Only one task should be completed")
+    assert.ok(task2Started, "Task2 should have started")
+    // Verify that the task was killed
+    assert.ok(taskKilled, "Task should be killed when signal is aborted")
+    // Verify that the error callback was called
+    assert.ok(pipelineErrorCalled, "onPipelineError should be called")
+    assert.ok(
+      pipelineError!.code === PipelineError.Aborted,
+      "Error message should indicate pipeline was aborted"
+    )
+  })
+
+  it("throws error immediately if signal is already aborted", async () => {
+    const abortController = new AbortController()
+    abortController.abort()
+
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo 1", build: "echo 1" },
+      cwd: ".",
+    })
+
+    const pipe = pipeline([task1])
+    let errorThrown = false
+
+    try {
+      await pipe.run({
+        signal: abortController.signal,
+      })
+    } catch (error) {
+      const e = error as PipelineError
+      errorThrown = true
+      assert.ok(
+        e.code === PipelineError.Aborted,
+        `Error should indicate signal was already aborted. Got ${e.code}. Message: ${e}`
+      )
+    }
+
+    assert.ok(errorThrown, "Should throw error when signal is already aborted")
+  })
 })
 
-describe("pipeline -> task conversion", () => {
+describe("pipeline <-> task conversion", () => {
   it("converts pipelines to tasks", async () => {
     const executionOrder: string[] = []
 
     // Mock spawn to track execution
-    const mockSpawn = mock.fn((command: string) => {
+    const mockSpawn = mock.fn((_command: string) => {
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
       mockProcess.stderr = new EventEmitter() as any
 
-      // Extract task name from command
-      const taskName = command.match(/echo\s+([^\s]+)/)?.[1] || "unknown"
-      executionOrder.push(`start:${taskName}`)
-
       setImmediate(() => {
         mockProcess.emit("exit", 0)
-        executionOrder.push(`complete:${taskName}`)
       })
 
       return mockProcess
@@ -714,6 +815,14 @@ describe("pipeline -> task conversion", () => {
 
     await ci.run({
       spawn: mockSpawn as any,
+      onTaskBegin: (name) => {
+        // For nested pipelines, name format is "pipelineTask:nestedTask" (e.g., "build:build:compile")
+        // Extract the nested task name (everything after first colon)
+        const parts = name.split(":")
+        const nestedTaskName =
+          parts.length > 1 ? parts.slice(1).join(":") : name
+        executionOrder.push(`start:${nestedTaskName}`)
+      },
       onTaskComplete: (name) => {
         executionOrder.push(`pipeline-complete:${name}`)
       },
@@ -801,23 +910,18 @@ describe("pipeline -> task conversion", () => {
     }, /Invalid dependency/)
   })
 
-  it("chains tasks with andThen", async () => {
+  it("converts tasks to pipelines by chaining tasks with andThen", async () => {
     const executionOrder: string[] = []
 
     // Mock spawn to track execution
-    const mockSpawn = mock.fn((command: string) => {
+    const mockSpawn = mock.fn((_command: string) => {
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
       mockProcess.stderr = new EventEmitter() as any
 
-      // Extract task name from command
-      const taskName = command.match(/echo\s+([^\s]+)/)?.[1] || "unknown"
-      executionOrder.push(`start:${taskName}`)
-
       setImmediate(() => {
         mockProcess.emit("exit", 0)
-        executionOrder.push(`complete:${taskName}`)
       })
 
       return mockProcess
@@ -841,6 +945,12 @@ describe("pipeline -> task conversion", () => {
     // Run the pipeline
     await build.run({
       spawn: mockSpawn as any,
+      onTaskBegin: (name) => {
+        executionOrder.push(`start:${name}`)
+      },
+      onTaskComplete: (name) => {
+        executionOrder.push(`complete:${name}`)
+      },
     })
 
     // Verify execution order: compile should complete before bundle starts
@@ -872,5 +982,4 @@ describe("pipeline -> task conversion", () => {
       )}`
     )
   })
-
 })

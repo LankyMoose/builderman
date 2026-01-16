@@ -48,20 +48,26 @@ export function pipeline(tasks: Task[]): Pipeline {
 
     async run(config): Promise<void> {
       const spawnFn = config?.spawn ?? spawn
+      const signal = config?.signal
       const runningTasks = new Map<number, ChildProcess>()
       const runningPipelines = new Map<number, { stop: () => void }>()
       let failed = false
 
+      // Check if signal is already aborted
+      if (signal?.aborted) {
+        throw new PipelineError("Aborted", PipelineError.Aborted)
+      }
+
       const scheduler = createScheduler(graph)
 
       let completionResolver: (() => void) | null = null
-      let completionRejector: ((error: Error) => void) | null = null
+      let completionRejector: ((error: PipelineError) => void) | null = null
       const completionPromise = new Promise<void>((resolve, reject) => {
         completionResolver = resolve
         completionRejector = reject
       })
 
-      const failPipeline = (error: Error) => {
+      const failPipeline = (error: PipelineError) => {
         if (failed) return
         failed = true
 
@@ -83,6 +89,14 @@ export function pipeline(tasks: Task[]): Pipeline {
       }
 
       const startTask = (task: Task) => {
+        // Check if signal is aborted before starting new tasks
+        if (signal?.aborted) {
+          failPipeline(
+            new PipelineError("Aborted", PipelineError.InvalidSignal)
+          )
+          return
+        }
+
         const {
           name: taskName,
           [$TASK_INTERNAL]: { id: taskId, pipeline: nestedPipeline },
@@ -94,6 +108,7 @@ export function pipeline(tasks: Task[]): Pipeline {
         if (nestedPipeline) {
           // Mark as ready immediately (pipeline entry nodes will handle their own ready state)
           advanceScheduler({ type: "ready", taskId })
+          config?.onTaskBegin?.(taskName)
 
           // Create an abort controller to stop the nested pipeline if needed
           let pipelineStopped = false
@@ -105,13 +120,14 @@ export function pipeline(tasks: Task[]): Pipeline {
 
           runningPipelines.set(taskId, { stop: stopPipeline })
 
-          // Run the nested pipeline
+          // Run the nested pipeline with signal propagation
           nestedPipeline
             .run({
               spawn: spawnFn,
-              onTaskError: (nestedTaskName, error) => {
+              signal, // Pass signal to nested pipeline
+              onTaskBegin: (nestedTaskName) => {
                 if (pipelineStopped) return
-                config?.onTaskError?.(`${taskName}:${nestedTaskName}`, error)
+                config?.onTaskBegin?.(`${taskName}:${nestedTaskName}`)
               },
               onTaskComplete: (nestedTaskName) => {
                 if (pipelineStopped) return
@@ -120,11 +136,8 @@ export function pipeline(tasks: Task[]): Pipeline {
               onPipelineError: (error) => {
                 if (pipelineStopped) return
                 runningPipelines.delete(taskId)
-                const e = new Error(
-                  `[${taskName}] Pipeline failed: ${error.message}`
-                )
-                config?.onTaskError?.(taskName, e)
-                failPipeline(e)
+                // error is already a PipelineError
+                failPipeline(error)
               },
               onPipelineComplete: () => {
                 if (pipelineStopped) return
@@ -136,11 +149,7 @@ export function pipeline(tasks: Task[]): Pipeline {
             .catch((error) => {
               if (pipelineStopped) return
               runningPipelines.delete(taskId)
-              const e = new Error(
-                `[${taskName}] Pipeline failed: ${error.message}`
-              )
-              config?.onTaskError?.(taskName, e)
-              failPipeline(e)
+              failPipeline(error)
             })
 
           return
@@ -159,11 +168,12 @@ export function pipeline(tasks: Task[]): Pipeline {
           : path.resolve(process.cwd(), cwd)
 
         if (!fs.existsSync(taskCwd)) {
-          const e = new Error(
-            `[${taskName}] Working directory does not exist: ${taskCwd}`
+          failPipeline(
+            new PipelineError(
+              `[${taskName}] Working directory does not exist: ${taskCwd}`,
+              PipelineError.InvalidTask
+            )
           )
-          config?.onTaskError?.(taskName, e)
-          failPipeline(e)
           return
         }
 
@@ -189,6 +199,7 @@ export function pipeline(tasks: Task[]): Pipeline {
         })
 
         runningTasks.set(taskId, child)
+        config?.onTaskBegin?.(taskName)
 
         let didMarkReady = false
         if (!shouldStdoutMarkReady) {
@@ -199,6 +210,11 @@ export function pipeline(tasks: Task[]): Pipeline {
         let output = ""
 
         child.stdout?.on("data", (buf) => {
+          // Check if signal is aborted before processing stdout
+          if (signal?.aborted) {
+            return
+          }
+
           const chunk = buf.toString()
           output += chunk
           process.stdout.write(chunk)
@@ -214,20 +230,24 @@ export function pipeline(tasks: Task[]): Pipeline {
         })
 
         child.on("error", (error) => {
-          const e = new Error(`[${taskName}] Failed to start: ${error.message}`)
-          config?.onTaskError?.(taskName, e)
-          failPipeline(e)
+          failPipeline(
+            new PipelineError(
+              `[${taskName}] Failed to start: ${error.message}`,
+              PipelineError.TaskFailed
+            )
+          )
         })
 
         child.on("exit", (code) => {
           runningTasks.delete(taskId)
 
           if (code !== 0) {
-            const e = new Error(
-              `[${taskName}] Task failed with exit code ${code ?? 1}`
+            failPipeline(
+              new PipelineError(
+                `[${taskName}] Task failed with exit code ${code ?? 1}`,
+                PipelineError.TaskFailed
+              )
             )
-            config?.onTaskError?.(taskName, e)
-            failPipeline(e)
             return
           }
 
@@ -239,9 +259,21 @@ export function pipeline(tasks: Task[]): Pipeline {
       }
 
       const advanceScheduler = (input?: SchedulerInput) => {
+        // Check if signal is aborted before advancing scheduler
+        if (signal?.aborted) {
+          failPipeline(new PipelineError("Aborted", PipelineError.Aborted))
+          return
+        }
+
         let result = input ? scheduler.next(input) : scheduler.next()
 
         while (true) {
+          // Check signal again in the loop
+          if (signal?.aborted) {
+            failPipeline(new PipelineError("Aborted", PipelineError.Aborted))
+            return
+          }
+
           const event = result.value
           const isFinished = result.done && result.value.type === "done"
 
@@ -264,26 +296,69 @@ export function pipeline(tasks: Task[]): Pipeline {
       }
 
       // Handle termination signals
-      const cleanups = ["SIGINT", "SIGTERM", "SIGQUIT", "SIGBREAK"].map(
-        (signal) => {
-          const handleSignal = () => {
-            failPipeline(new Error(`Received ${signal}`))
-          }
-          process.once(signal, handleSignal)
-          return () => {
-            process.removeListener(signal, handleSignal)
-          }
+      const processTerminationListenerCleanups = [
+        "SIGINT",
+        "SIGTERM",
+        "SIGQUIT",
+        "SIGBREAK",
+      ].map((sig) => {
+        const handleSignal = () => {
+          failPipeline(
+            new PipelineError(
+              `Received ${sig}`,
+              PipelineError.ProcessTerminated
+            )
+          )
         }
-      )
+        process.once(sig, handleSignal)
+        return () => {
+          process.removeListener(sig, handleSignal)
+        }
+      })
+
+      // Handle abort signal if provided
+      let signalCleanup: (() => void) | null = null
+      if (signal) {
+        const handleAbort = () => {
+          failPipeline(new PipelineError("Aborted", PipelineError.Aborted))
+        }
+        signal.addEventListener("abort", handleAbort)
+        signalCleanup = () => {
+          signal.removeEventListener("abort", handleAbort)
+        }
+      }
 
       // 🚀 Kick off initial runnable tasks
       advanceScheduler()
 
       await completionPromise.finally(() => {
-        cleanups.forEach((cleanup) => cleanup())
+        processTerminationListenerCleanups.forEach((cleanup) => cleanup())
+        signalCleanup?.()
       })
     },
   }
 
   return pipelineImpl
+}
+
+type PipelineErrorCode =
+  | typeof PipelineError.Aborted
+  | typeof PipelineError.ProcessTerminated
+  | typeof PipelineError.TaskFailed
+  | typeof PipelineError.InvalidSignal
+  | typeof PipelineError.InvalidTask
+
+export class PipelineError extends Error {
+  readonly code: PipelineErrorCode
+  constructor(message: string, code: PipelineErrorCode) {
+    super(message)
+    this.name = "PipelineError"
+    this.code = code
+  }
+
+  static Aborted = 0 as const
+  static ProcessTerminated = 1 as const
+  static TaskFailed = 2 as const
+  static InvalidSignal = 3 as const
+  static InvalidTask = 4 as const
 }

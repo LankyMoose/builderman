@@ -39,8 +39,8 @@ const task2 = task({
 })
 
 await pipeline([task1, task2]).run({
-  onTaskError: (taskName, error) => {
-    console.error(`[${taskName}] Error: ${error.message}`)
+  onTaskBegin: (taskName) => {
+    console.log(`[${taskName}] Starting...`)
   },
   onTaskComplete: (taskName) => {
     console.log(`[${taskName}] Complete!`)
@@ -54,13 +54,75 @@ await pipeline([task1, task2]).run({
 })
 ```
 
+## Error Handling
+
+Pipeline errors are provided as `PipelineError` instances with error codes for easier handling:
+
+```ts
+import { pipeline, PipelineError } from "builderman"
+
+await pipeline([task1, task2]).run({
+  onPipelineError: (error) => {
+    switch (error.code) {
+      case PipelineError.Aborted:
+        console.error("Pipeline was cancelled")
+        break
+      case PipelineError.TaskFailed:
+        console.error(`Task failed: ${error.message}`)
+        break
+      case PipelineError.ProcessTerminated:
+        console.error("Process was terminated")
+        break
+      case PipelineError.InvalidTask:
+        console.error(`Invalid task configuration: ${error.message}`)
+        break
+      case PipelineError.InvalidSignal:
+        console.error("Invalid abort signal")
+        break
+    }
+  },
+})
+```
+
+## Cancellation
+
+You can cancel a running pipeline by providing an `AbortSignal`:
+
+```ts
+import { pipeline, PipelineError } from "builderman"
+
+const abortController = new AbortController()
+
+const runPromise = pipeline([task1, task2]).run({
+  signal: abortController.signal,
+  onPipelineError: (error) => {
+    if (error.code === PipelineError.Aborted) {
+      console.error("Pipeline was cancelled")
+    }
+  },
+})
+
+// Cancel the pipeline after 5 seconds
+setTimeout(() => {
+  abortController.abort()
+}, 5000)
+
+try {
+  await runPromise
+} catch (error) {
+  if (error instanceof PipelineError && error.code === PipelineError.Aborted) {
+    // Pipeline was cancelled
+  }
+}
+```
+
 ## Pipeline Composition
 
 Build complex workflows by composing tasks and pipelines together.
 
 ### Task Chaining
 
-Chain tasks together using `andThen()` to create a pipeline that will run the tasks in order:
+Chain tasks together using `andThen()` to create a pipeline that will run the tasks in order, automatically adding the previous task as a dependency:
 
 ```ts
 import { task, pipeline } from "builderman"

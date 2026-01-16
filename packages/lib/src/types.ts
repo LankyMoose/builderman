@@ -1,4 +1,5 @@
 import type { $TASK_INTERNAL } from "./constants.js"
+import { PipelineError } from "./pipeline.js"
 
 export interface Commands {
   dev: string
@@ -28,13 +29,18 @@ export interface Task {
 
 export interface PipelineRunConfig {
   /**
+   * Provides a custom abort signal for the pipeline.
+   * Aborting the signal will cause the pipeline to fail.
+   */
+  signal?: AbortSignal
+  /**
    * Provides a custom spawn function for the pipeline.
    * @default import("node:child_process").spawn
    */
   spawn?: typeof import("node:child_process").spawn
-  onTaskError?: (taskName: string, error: Error) => void
+  onTaskBegin?: (taskName: string) => void
   onTaskComplete?: (taskName: string) => void
-  onPipelineError?: (error: Error) => void
+  onPipelineError?: (error: PipelineError) => void
   onPipelineComplete?: () => void
 }
 
