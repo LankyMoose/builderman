@@ -7,7 +7,7 @@ import { createTaskGraph } from "./graph.js"
 import { createScheduler, SchedulerInput } from "./scheduler.js"
 import { task } from "./task.js"
 import { validateTasks } from "./util.js"
-import type { Pipeline, Task, PipelineTaskConfig } from "./types.js"
+import type { Pipeline, Task, PipelineTaskConfig, TaskGraph } from "./types.js"
 
 // Module-level cache for pipeline-to-task conversions
 // Key: Pipeline, Value: Map of name -> Task
@@ -94,10 +94,96 @@ export function pipeline(tasks: Task[]): Pipeline {
       }
 
       const executeAllTeardowns = () => {
-        // Execute all remaining teardown commands
-        for (const taskId of teardownCommands.keys()) {
+        // Execute teardowns in reverse dependency order
+        // Tasks with dependents should be torn down before their dependencies
+        const taskIdsWithTeardown = Array.from(teardownCommands.keys())
+
+        // Calculate reverse topological order
+        // Tasks that have dependents should be torn down first
+        const teardownOrder = getReverseDependencyOrder(
+          taskIdsWithTeardown,
+          graph
+        )
+
+        // Execute teardowns in reverse dependency order
+        for (const taskId of teardownOrder) {
           executeTeardown(taskId)
         }
+      }
+
+      const getReverseDependencyOrder = (
+        taskIds: number[],
+        graph: TaskGraph
+      ): number[] => {
+        // Create a set for quick lookup
+        const taskIdSet = new Set(taskIds)
+
+        // For reverse dependency order, we want to tear down dependents before dependencies
+        // If api depends on db, we want: api first, then db
+        // This is the reverse of normal execution order
+
+        // Count how many dependencies each task has (within the teardown set)
+        const dependencyCount = new Map<number, number>()
+        for (const taskId of taskIds) {
+          const node = graph.nodes.get(taskId)
+          if (node) {
+            let count = 0
+            for (const depId of node.dependencies) {
+              if (taskIdSet.has(depId)) {
+                count++
+              }
+            }
+            dependencyCount.set(taskId, count)
+          }
+        }
+
+        // Build result in reverse order
+        // Start with tasks that have no dependencies (leaf nodes) - these go LAST
+        const result: number[] = []
+        const visited = new Set<number>()
+        const queue: number[] = []
+
+        // Find leaf nodes (tasks with no dependencies in teardown set)
+        for (const taskId of taskIds) {
+          if (dependencyCount.get(taskId) === 0) {
+            queue.push(taskId)
+          }
+        }
+
+        // Process in reverse topological order
+        while (queue.length > 0) {
+          const taskId = queue.shift()!
+          if (visited.has(taskId)) continue
+          visited.add(taskId)
+
+          // Add to front (so we get reverse order: dependents before dependencies)
+          result.unshift(taskId)
+
+          // Find tasks that depend on this one (dependents)
+          const node = graph.nodes.get(taskId)
+          if (node) {
+            for (const dependentId of node.dependents) {
+              if (taskIdSet.has(dependentId) && !visited.has(dependentId)) {
+                const currentCount = dependencyCount.get(dependentId) ?? 0
+                const newCount = currentCount - 1
+                dependencyCount.set(dependentId, newCount)
+                // When a dependent has no more dependencies to wait for, add it to queue
+                if (newCount === 0) {
+                  queue.push(dependentId)
+                }
+              }
+            }
+          }
+        }
+
+        // Add any remaining tasks (shouldn't happen in a valid graph, but handle it)
+        for (const taskId of taskIds) {
+          if (!visited.has(taskId)) {
+            result.unshift(taskId)
+          }
+        }
+
+        return result
       }
 
       const failPipeline = (error: PipelineError) => {
@@ -296,9 +382,8 @@ export function pipeline(tasks: Task[]): Pipeline {
         child.on("exit", (code) => {
           runningTasks.delete(taskId)
 
-          // Execute teardown if command entered running state
-          // (runs regardless of success or failure)
-          executeTeardown(taskId)
+          // Don't execute teardown immediately - it will be executed in reverse dependency order
+          // when the pipeline completes or fails
 
           if (code !== 0) {
             failPipeline(
@@ -415,10 +500,12 @@ type PipelineErrorCode =
 
 export class PipelineError extends Error {
   readonly code: PipelineErrorCode
-  constructor(message: string, code: PipelineErrorCode) {
+  readonly taskName?: string
+  constructor(message: string, code: PipelineErrorCode, taskName?: string) {
     super(message)
     this.name = "PipelineError"
     this.code = code
+    this.taskName = taskName
   }
 
   static Aborted = 0 as const

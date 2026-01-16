@@ -1117,6 +1117,82 @@ describe("pipeline", () => {
         "task2's teardown should NOT be executed if task2 never started"
       )
     })
+
+    it("executes teardowns in reverse dependency order", async () => {
+      const teardownOrder: string[] = []
+
+      const db = task({
+        name: "db",
+        commands: {
+          dev: {
+            run: "echo db",
+            teardown: "echo teardown:db",
+          },
+          build: "echo db",
+        },
+        cwd: ".",
+      })
+
+      const api = task({
+        name: "api",
+        commands: {
+          dev: {
+            run: "echo api",
+            teardown: "echo teardown:api",
+          },
+          build: "echo api",
+        },
+        cwd: ".",
+        dependencies: [db], // api depends on db
+      })
+
+      const mockSpawn = mock.fn((command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+
+        if (command.includes("teardown:api")) {
+          teardownOrder.push("api")
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        } else if (command.includes("teardown:db")) {
+          teardownOrder.push("db")
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        } else {
+          // Main commands - complete successfully
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        }
+
+        return mockProcess
+      })
+
+      const pipe = pipeline([db, api])
+      await pipe.run({
+        spawn: mockSpawn as any,
+      })
+
+      // Wait for all teardowns to complete
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      // api should be torn down before db (reverse dependency order)
+      assert.strictEqual(teardownOrder.length, 2, "Both teardowns should execute")
+      assert.strictEqual(
+        teardownOrder[0],
+        "api",
+        "api (dependent) should be torn down first"
+      )
+      assert.strictEqual(
+        teardownOrder[1],
+        "db",
+        "db (dependency) should be torn down after api"
+      )
+    })
   })
 })
 
