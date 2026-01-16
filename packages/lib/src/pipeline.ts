@@ -406,6 +406,10 @@ export function pipeline(tasks: Task[]): Pipeline {
           typeof commandConfig === "string"
             ? undefined
             : commandConfig.readyWhen
+        const readyTimeout =
+          typeof commandConfig === "string"
+            ? Infinity
+            : commandConfig.readyTimeout ?? Infinity
         const teardown =
           typeof commandConfig === "string" ? undefined : commandConfig.teardown
 
@@ -460,9 +464,23 @@ export function pipeline(tasks: Task[]): Pipeline {
         config?.onTaskBegin?.(taskName)
 
         let didMarkReady = false
+        let readyTimeoutId: NodeJS.Timeout | null = null
+
         if (!readyWhen) {
           advanceScheduler({ type: "ready", taskId })
           didMarkReady = true
+        } else if (readyTimeout !== Infinity) {
+          // Set up timeout for readyWhen condition
+          readyTimeoutId = setTimeout(() => {
+            if (!didMarkReady) {
+              failPipeline(
+                new PipelineError(
+                  `[${taskName}] Task did not become ready within ${readyTimeout}ms`,
+                  PipelineError.TaskFailed
+                )
+              )
+            }
+          }, readyTimeout)
         }
 
         let output = ""
@@ -478,6 +496,10 @@ export function pipeline(tasks: Task[]): Pipeline {
           process.stdout.write(chunk)
 
           if (!didMarkReady && readyWhen && readyWhen(output)) {
+            if (readyTimeoutId) {
+              clearTimeout(readyTimeoutId)
+              readyTimeoutId = null
+            }
             advanceScheduler({ type: "ready", taskId })
             didMarkReady = true
           }
@@ -492,6 +514,12 @@ export function pipeline(tasks: Task[]): Pipeline {
           // Remove teardown from map since it was never actually running
           teardownCommands.delete(taskId)
 
+          // Clear ready timeout if it exists
+          if (readyTimeoutId) {
+            clearTimeout(readyTimeoutId)
+            readyTimeoutId = null
+          }
+
           failPipeline(
             new PipelineError(
               `[${taskName}] Failed to start: ${error.message}`,
@@ -502,6 +530,12 @@ export function pipeline(tasks: Task[]): Pipeline {
 
         child.on("exit", (code) => {
           runningTasks.delete(taskId)
+
+          // Clear ready timeout if it exists
+          if (readyTimeoutId) {
+            clearTimeout(readyTimeoutId)
+            readyTimeoutId = null
+          }
 
           // Don't execute teardown immediately - it will be executed in reverse dependency order
           // when the pipeline completes or fails
