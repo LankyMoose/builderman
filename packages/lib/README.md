@@ -35,12 +35,15 @@ const task2 = task({
   commands: {
     build: "npm run build",
     dev: "npm run dev",
+    deploy: "npm run deploy",
   },
   cwd: "packages/consumer",
   dependencies: [task1],
 })
 
 await pipeline([task1, task2]).run({
+  // default command is "build" if process.NODE_ENV is "production", otherwise "dev".
+  command: "deploy",
   onTaskBegin: (taskName) => {
     console.log(`[${taskName}] Starting...`)
   },
@@ -195,6 +198,102 @@ const api = task({
 
 // Teardown order: api first, then db
 await pipeline([db, api]).run()
+```
+
+## Skipping Tasks
+
+Tasks can be automatically skipped when they don't have a command for the current mode. This is useful for multi-mode pipelines where some tasks are only relevant in certain contexts.
+
+### Default Behavior
+
+If a task has no command for the current mode, it is **skipped**:
+
+- ✅ The task participates in the dependency graph
+- ✅ The task resolves immediately (satisfies dependencies)
+- ✅ Dependents are unblocked
+- ❌ No command is executed
+- ❌ No teardown is registered
+- ❌ No readiness is waited for
+
+```ts
+const dbTask = task({
+  name: "database",
+  commands: {
+    dev: "docker-compose up",
+    // No build command - will be skipped in build mode
+  },
+  cwd: ".",
+})
+
+const apiTask = task({
+  name: "api",
+  commands: {
+    dev: "npm run dev",
+    build: "npm run build",
+  },
+  cwd: ".",
+  dependencies: [dbTask], // dbTask will be skipped, but apiTask will still run
+})
+
+await pipeline([dbTask, apiTask]).run({
+  command: "build",
+  onTaskSkipped: (taskName, mode) => {
+    console.log(`[${taskName}] skipped (no command for mode "${mode}")`)
+  },
+})
+```
+
+### Strict Mode
+
+In strict mode, missing commands cause the pipeline to fail. Use this for CI/release pipelines where every task is expected to participate:
+
+```ts
+await pipeline([dbTask, apiTask]).run({
+  command: "build",
+  strict: true, // Missing commands will cause pipeline to fail
+})
+```
+
+### Task-Level Override
+
+Even with global strict mode, you can explicitly allow a task to be skipped:
+
+```ts
+const dbTask = task({
+  name: "database",
+  commands: {
+    dev: "docker-compose up",
+    // No build command, but explicitly allowed to skip
+  },
+  cwd: ".",
+  allowSkip: true, // Explicitly allow skipping even in strict mode
+})
+
+await pipeline([dbTask]).run({
+  command: "build",
+  strict: true, // Global strict mode
+  // dbTask will still be skipped because allowSkip: true
+})
+```
+
+### Nested Pipeline Behavior
+
+When a pipeline is converted to a task, skip behavior is preserved:
+
+- If **all** inner tasks are skipped → outer task is skipped
+- If **some** run, some skip → outer task is completed
+- If **any** fail → outer task fails
+
+```ts
+const innerPipeline = pipeline([
+  task({ name: "inner1", commands: { dev: "..." }, cwd: "." }),
+  task({ name: "inner2", commands: { dev: "..." }, cwd: "." }),
+])
+
+const outerTask = innerPipeline.toTask({ name: "outer" })
+
+// If all inner tasks are skipped in build mode, outer task is also skipped
+await pipeline([outerTask]).run({ command: "build" })
 ```
 
 ## Pipeline Composition

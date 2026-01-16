@@ -924,69 +924,66 @@ describe("pipeline", () => {
         // Expected to reject
       }
 
-      // Wait for teardown to execute
-      await new Promise((resolve) => setTimeout(resolve, 20))
-
       assert.ok(
         teardownExecuted,
         "Teardown should be executed when pipeline is cancelled"
       )
     })
 
-    // it("does not execute teardown if task was skipped (no command for mode)", async () => {
-    //   let teardownExecuted = false
+    it("does not execute teardown if task was skipped (no command for mode)", async () => {
+      let teardownExecuted = false
 
-    //   const task1 = task({
-    //     name: "task1",
-    //     commands: {
-    //       dev: {
-    //         run: "echo task1",
-    //         teardown: "echo teardown",
-    //       },
-    //       build: "echo task1", // No teardown for build mode
-    //     },
-    //     cwd: ".",
-    //   })
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: {
+            run: "echo task1",
+            teardown: "echo teardown",
+          },
+          build: "echo task1", // No teardown for build mode
+        },
+        cwd: ".",
+      })
 
-    //   const mockSpawn = mock.fn((command: string) => {
-    //     const mockProcess = new EventEmitter() as ChildProcess
-    //     mockProcess.kill = mock.fn() as any
-    //     mockProcess.stdout = new EventEmitter() as any
-    //     mockProcess.stderr = new EventEmitter() as any
+      const mockSpawn = mock.fn((command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
 
-    //     if (command.includes("teardown")) {
-    //       teardownExecuted = true
-    //       setImmediate(() => {
-    //         mockProcess.emit("exit", 0)
-    //       })
-    //     } else {
-    //       // Main command
-    //       setImmediate(() => {
-    //         mockProcess.emit("exit", 0)
-    //       })
-    //     }
+        if (command.includes("teardown")) {
+          teardownExecuted = true
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        } else {
+          // Main command
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        }
 
-    //     return mockProcess
-    //   })
+        return mockProcess
+      })
 
-    //   // Run in production mode (build command)
-    //   const originalEnv = process.env.NODE_ENV
-    //   process.env.NODE_ENV = "production"
+      // Run in production mode (build command)
+      const originalEnv = process.env.NODE_ENV
+      process.env.NODE_ENV = "production"
 
-    //   try {
-    //     const pipe = pipeline([task1])
-    //     await pipe.run({
-    //       spawn: mockSpawn as any,
-    //     })
-    //   } finally {
-    //     process.env.NODE_ENV = originalEnv
-    //   }
+      try {
+        const pipe = pipeline([task1])
+        await pipe.run({
+          spawn: mockSpawn as any,
+        })
+      } finally {
+        process.env.NODE_ENV = originalEnv
+      }
 
-    //   assert.ok(
-    //     !teardownExecuted,
-    //     "Teardown should NOT be executed if task was skipped (no command for this mode)"
-    //   )
-    // })
+      assert.ok(
+        !teardownExecuted,
+        "Teardown should NOT be executed if task was skipped (no command for this mode)"
+      )
+    })
 
     it("does not execute teardown if task failed before starting command", async () => {
       let teardownExecuted = false
@@ -1177,11 +1174,12 @@ describe("pipeline", () => {
         spawn: mockSpawn as any,
       })
 
-      // Wait for all teardowns to complete
-      await new Promise((resolve) => setTimeout(resolve, 20))
-
       // api should be torn down before db (reverse dependency order)
-      assert.strictEqual(teardownOrder.length, 2, "Both teardowns should execute")
+      assert.strictEqual(
+        teardownOrder.length,
+        2,
+        "Both teardowns should execute"
+      )
       assert.strictEqual(
         teardownOrder[0],
         "api",
@@ -1191,6 +1189,279 @@ describe("pipeline", () => {
         teardownOrder[1],
         "db",
         "db (dependency) should be torn down after api"
+      )
+    })
+  })
+
+  describe("skip", () => {
+    it("skips task when command does not exist", async () => {
+      let skippedCalled = false
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: "echo task1",
+          // No build command
+        },
+        cwd: ".",
+      })
+
+      const mockSpawn = mock.fn((_command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => mockProcess.emit("exit", 0))
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1])
+      await pipe.run({
+        command: "build",
+        spawn: mockSpawn as any,
+        onTaskSkipped: (taskName, mode) => {
+          assert.strictEqual(taskName, "task1")
+          assert.strictEqual(mode, "build")
+          skippedCalled = true
+        },
+      })
+
+      assert.ok(skippedCalled, "onTaskSkipped should be called")
+      assert.strictEqual(
+        mockSpawn.mock.calls.length,
+        0,
+        "No command should be executed"
+      )
+    })
+
+    it("skipped task satisfies dependencies", async () => {
+      const executionOrder: string[] = []
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: "echo task1",
+          // No build command
+        },
+        cwd: ".",
+      })
+
+      const task2 = task({
+        name: "task2",
+        commands: {
+          build: "echo task2",
+          dev: "echo task2",
+        },
+        cwd: ".",
+        dependencies: [task1],
+      })
+
+      const mockSpawn = mock.fn((_command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+
+        if (_command.includes("task2")) {
+          executionOrder.push("task2")
+        }
+        setImmediate(() => mockProcess.emit("exit", 0))
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1, task2])
+      await pipe.run({
+        command: "build",
+        spawn: mockSpawn as any,
+        onTaskBegin: (taskName) => {
+          executionOrder.push(`begin:${taskName}`)
+        },
+      })
+
+      // task1 should be skipped, task2 should run
+      assert.ok(executionOrder.includes("begin:task2"), "task2 should run")
+      assert.ok(executionOrder.includes("task2"), "task2 should execute")
+    })
+
+    it("fails in strict mode when command does not exist", async () => {
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: "echo task1",
+          // No build command
+        },
+        cwd: ".",
+      })
+
+      const mockSpawn = mock.fn((_command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => mockProcess.emit("exit", 0))
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1])
+      let error: any
+      try {
+        await pipe.run({
+          command: "build",
+          strict: true,
+          spawn: mockSpawn as any,
+        })
+      } catch (e) {
+        error = e
+      }
+
+      assert.ok(error, "Should throw error in strict mode")
+      assert.ok(error instanceof PipelineError, "Should be PipelineError")
+      assert.strictEqual(error.code, PipelineError.TaskFailed)
+      assert.ok(
+        error.message.includes("strict mode"),
+        "Error should mention strict mode"
+      )
+    })
+
+    it("allows skip in strict mode with allowSkip", async () => {
+      let skippedCalled = false
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: "echo task1",
+          // No build command
+        },
+        cwd: ".",
+        allowSkip: true,
+      })
+
+      const mockSpawn = mock.fn((_command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => mockProcess.emit("exit", 0))
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1])
+      await pipe.run({
+        command: "build",
+        strict: true,
+        spawn: mockSpawn as any,
+        onTaskSkipped: (taskName, mode) => {
+          assert.strictEqual(taskName, "task1")
+          assert.strictEqual(mode, "build")
+          skippedCalled = true
+        },
+      })
+
+      assert.ok(skippedCalled, "onTaskSkipped should be called")
+      assert.strictEqual(
+        mockSpawn.mock.calls.length,
+        0,
+        "No command should be executed"
+      )
+    })
+
+    it("nested pipeline skips when all inner tasks are skipped", async () => {
+      let outerSkipped = false
+      const innerTask1 = task({
+        name: "inner1",
+        commands: {
+          dev: "echo inner1",
+          // No build command
+        },
+        cwd: ".",
+      })
+
+      const innerTask2 = task({
+        name: "inner2",
+        commands: {
+          dev: "echo inner2",
+          // No build command
+        },
+        cwd: ".",
+      })
+
+      const innerPipeline = pipeline([innerTask1, innerTask2])
+      const outerTask = innerPipeline.toTask({ name: "outer" })
+
+      const mockSpawn = mock.fn((_command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => mockProcess.emit("exit", 0))
+        return mockProcess
+      })
+
+      const pipe = pipeline([outerTask])
+      await pipe.run({
+        command: "build",
+        spawn: mockSpawn as any,
+        onTaskSkipped: (taskName, _mode) => {
+          if (taskName === "outer") {
+            outerSkipped = true
+          }
+        },
+      })
+
+      assert.ok(
+        outerSkipped,
+        "Outer task should be skipped when all inner tasks are skipped"
+      )
+      assert.strictEqual(
+        mockSpawn.mock.calls.length,
+        0,
+        "No commands should be executed"
+      )
+    })
+
+    it("nested pipeline completes when some inner tasks run", async () => {
+      let outerCompleted = false
+      const innerTask1 = task({
+        name: "inner1",
+        commands: {
+          dev: "echo inner1",
+          build: "echo inner1",
+        },
+        cwd: ".",
+      })
+
+      const innerTask2 = task({
+        name: "inner2",
+        commands: {
+          dev: "echo inner2",
+          // No build command
+        },
+        cwd: ".",
+      })
+
+      const innerPipeline = pipeline([innerTask1, innerTask2])
+      const outerTask = innerPipeline.toTask({ name: "outer" })
+
+      const mockSpawn = mock.fn((_command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => mockProcess.emit("exit", 0))
+        return mockProcess
+      })
+
+      const pipe = pipeline([outerTask])
+      await pipe.run({
+        command: "build",
+        spawn: mockSpawn as any,
+        onTaskComplete: (taskName) => {
+          if (taskName === "outer") {
+            outerCompleted = true
+          }
+        },
+      })
+
+      assert.ok(
+        outerCompleted,
+        "Outer task should complete when some inner tasks run"
       )
     })
   })

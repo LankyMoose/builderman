@@ -10,8 +10,7 @@ export interface CommandConfig {
 export type Command = string | CommandConfig
 
 export interface Commands {
-  dev: Command
-  build: Command
+  [key: string]: Command
 }
 
 export interface TaskConfig {
@@ -19,6 +18,11 @@ export interface TaskConfig {
   commands: Commands
   cwd: string
   dependencies?: Task[]
+  /**
+   * Allows this task to be skipped even in strict mode.
+   * Use this to explicitly mark tasks that are intentionally mode-specific.
+   */
+  allowSkip?: boolean
 }
 
 interface TaskInternal extends TaskConfig {
@@ -35,6 +39,11 @@ export interface Task {
 
 export interface PipelineRunConfig {
   /**
+   * Provides a custom command for the pipeline.
+   * @default process.env.NODE_ENV === "production" ? "build" : "dev"
+   */
+  command?: string
+  /**
    * Provides a custom abort signal for the pipeline.
    * Aborting the signal will cause the pipeline to fail.
    */
@@ -44,8 +53,14 @@ export interface PipelineRunConfig {
    * @default import("node:child_process").spawn
    */
   spawn?: typeof import("node:child_process").spawn
+  /**
+   * If true, missing commands will cause the pipeline to fail.
+   * Use this for CI/release pipelines where every task is expected to participate.
+   */
+  strict?: boolean
   onTaskBegin?: (taskName: string) => void
   onTaskComplete?: (taskName: string) => void
+  onTaskSkipped?: (taskName: string, mode: string) => void
   onTaskTeardown?: (taskName: string) => void
   onTaskTeardownError?: (taskName: string, error: Error) => void
   onPipelineError?: (error: PipelineError) => void

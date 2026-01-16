@@ -13,6 +13,9 @@ import type { Pipeline, Task, PipelineTaskConfig, TaskGraph } from "./types.js"
 // Key: Pipeline, Value: Map of name -> Task
 const pipelineTaskCache = new WeakMap<Pipeline, Map<string, Task>>()
 
+// Store tasks for each pipeline (for nested pipeline skip tracking)
+const pipelineTasksCache = new WeakMap<Pipeline, Task[]>()
+
 /**
  * Creates a pipeline that manages task execution with dependency-based coordination.
  */
@@ -27,7 +30,7 @@ export function pipeline(tasks: Task[]): Pipeline {
 
       const syntheticTask = task({
         name: config.name,
-        commands: { dev: ":", build: ":" }, // Dummy commands (no-op)
+        commands: {},
         cwd: ".", // Dummy cwd
         dependencies: [...(config.dependencies || [])],
       })
@@ -71,51 +74,68 @@ export function pipeline(tasks: Task[]): Pipeline {
         completionRejector = reject
       })
 
-      const executeTeardown = (taskId: number) => {
+      const executeTeardown = (taskId: number): Promise<void> => {
         const teardown = teardownCommands.get(taskId)
-        if (!teardown) return
+        if (!teardown) return Promise.resolve()
 
         // Remove from map so it doesn't run again
         teardownCommands.delete(taskId)
 
         config?.onTaskTeardown?.(teardown.taskName)
 
-        try {
-          const teardownProcess = spawnFn(teardown.command, {
-            cwd: teardown.cwd,
-            stdio: "inherit",
-            shell: true,
-          })
+        return new Promise<void>((resolve) => {
+          try {
+            const teardownProcess = spawnFn(teardown.command, {
+              cwd: teardown.cwd,
+              stdio: "inherit",
+              shell: true,
+            })
 
-          teardownProcess.on("error", (error) => {
-            const teardownError = new Error(
-              `[${teardown.taskName}] Teardown failed: ${error.message}`
-            )
-            config?.onTaskTeardownError?.(teardown.taskName, teardownError)
-          })
+            let resolved = false
+            const resolveOnce = () => {
+              if (!resolved) {
+                resolved = true
+                resolve()
+              }
+            }
 
-          teardownProcess.on("exit", (code) => {
-            if (code !== 0) {
+            teardownProcess.on("error", (error) => {
               const teardownError = new Error(
-                `[${teardown.taskName}] Teardown failed with exit code ${
-                  code ?? 1
-                }`
+                `[${teardown.taskName}] Teardown failed: ${error.message}`
               )
               config?.onTaskTeardownError?.(teardown.taskName, teardownError)
-            }
-          })
-        } catch (error: any) {
-          const teardownError = new Error(
-            `[${teardown.taskName}] Teardown failed to start: ${error.message}`
-          )
-          config?.onTaskTeardownError?.(teardown.taskName, teardownError)
-        }
+              resolveOnce()
+            })
+
+            teardownProcess.on("exit", (code) => {
+              if (code !== 0) {
+                const teardownError = new Error(
+                  `[${teardown.taskName}] Teardown failed with exit code ${
+                    code ?? 1
+                  }`
+                )
+                config?.onTaskTeardownError?.(teardown.taskName, teardownError)
+              }
+              resolveOnce()
+            })
+          } catch (error: any) {
+            const teardownError = new Error(
+              `[${teardown.taskName}] Teardown failed to start: ${error.message}`
+            )
+            config?.onTaskTeardownError?.(teardown.taskName, teardownError)
+            resolve()
+          }
+        })
       }
 
-      const executeAllTeardowns = () => {
+      const executeAllTeardowns = async (): Promise<void> => {
         // Execute teardowns in reverse dependency order
         // Tasks with dependents should be torn down before their dependencies
         const taskIdsWithTeardown = Array.from(teardownCommands.keys())
+
+        if (taskIdsWithTeardown.length === 0) {
+          return
+        }
 
         // Calculate reverse topological order
         // Tasks that have dependents should be torn down first
@@ -124,9 +144,10 @@ export function pipeline(tasks: Task[]): Pipeline {
           graph
         )
 
-        // Execute teardowns in reverse dependency order
+        // Execute teardowns sequentially in reverse dependency order
+        // This ensures dependents are torn down before their dependencies
         for (const taskId of teardownOrder) {
-          executeTeardown(taskId)
+          await executeTeardown(taskId)
         }
       }
 
@@ -205,7 +226,7 @@ export function pipeline(tasks: Task[]): Pipeline {
         return result
       }
 
-      const failPipeline = (error: PipelineError) => {
+      const failPipeline = async (error: PipelineError) => {
         if (failed) return
         failed = true
 
@@ -222,8 +243,14 @@ export function pipeline(tasks: Task[]): Pipeline {
           } catch {}
         }
 
-        // Execute all teardown commands
-        executeAllTeardowns()
+        // Execute all teardown commands and wait for them to complete
+        // Even if teardowns fail, we still want to reject the pipeline
+        try {
+          await executeAllTeardowns()
+        } catch (teardownError) {
+          // Teardown errors are already reported via onTaskTeardownError
+          // We continue to reject the pipeline with the original error
+        }
 
         config?.onPipelineError?.(error)
         completionRejector?.(error)
@@ -247,6 +274,16 @@ export function pipeline(tasks: Task[]): Pipeline {
 
         // Handle pipeline tasks
         if (nestedPipeline) {
+          // Track nested pipeline state for skip behavior
+          let nestedSkippedCount = 0
+          let nestedCompletedCount = 0
+
+          // Get total tasks from nested pipeline
+          const nestedTasks = pipelineTasksCache.get(nestedPipeline)
+          const nestedTotalTasks = nestedTasks
+            ? createTaskGraph(nestedTasks).nodes.size
+            : 0
+
           // Mark as ready immediately (pipeline entry nodes will handle their own ready state)
           advanceScheduler({ type: "ready", taskId })
           config?.onTaskBegin?.(taskName)
@@ -265,6 +302,8 @@ export function pipeline(tasks: Task[]): Pipeline {
           nestedPipeline
             .run({
               spawn: spawnFn,
+              command: config?.command,
+              strict: config?.strict,
               signal, // Pass signal to nested pipeline
               onTaskBegin: (nestedTaskName) => {
                 if (pipelineStopped) return
@@ -272,7 +311,13 @@ export function pipeline(tasks: Task[]): Pipeline {
               },
               onTaskComplete: (nestedTaskName) => {
                 if (pipelineStopped) return
+                nestedCompletedCount++
                 config?.onTaskComplete?.(`${taskName}:${nestedTaskName}`)
+              },
+              onTaskSkipped: (nestedTaskName, mode) => {
+                if (pipelineStopped) return
+                nestedSkippedCount++
+                config?.onTaskSkipped?.(`${taskName}:${nestedTaskName}`, mode)
               },
               onPipelineError: (error) => {
                 if (pipelineStopped) return
@@ -283,8 +328,33 @@ export function pipeline(tasks: Task[]): Pipeline {
               onPipelineComplete: () => {
                 if (pipelineStopped) return
                 runningPipelines.delete(taskId)
-                config?.onTaskComplete?.(taskName)
-                advanceScheduler({ type: "complete", taskId })
+
+                // Determine nested pipeline result based on skip behavior:
+                // - If all inner tasks are skipped → outer task is skipped
+                // - If some run, some skip → outer task is completed
+                // - If any fail → outer task fails (handled in onPipelineError)
+                const commandName =
+                  config?.command ?? process.env.NODE_ENV === "production"
+                    ? "build"
+                    : "dev"
+
+                if (
+                  nestedSkippedCount === nestedTotalTasks &&
+                  nestedTotalTasks > 0
+                ) {
+                  // All tasks were skipped
+                  console.log(
+                    `[${taskName}] skipped (all nested tasks skipped)`
+                  )
+                  config?.onTaskSkipped?.(taskName, commandName)
+                  setImmediate(() => {
+                    advanceScheduler({ type: "skip", taskId })
+                  })
+                } else {
+                  // Some tasks ran (and completed successfully)
+                  config?.onTaskComplete?.(taskName)
+                  advanceScheduler({ type: "complete", taskId })
+                }
               },
             })
             .catch((error) => {
@@ -297,10 +367,38 @@ export function pipeline(tasks: Task[]): Pipeline {
         }
 
         // Regular task execution
-        const commandConfig =
-          process.env.NODE_ENV === "production"
-            ? task[$TASK_INTERNAL].commands.build
-            : task[$TASK_INTERNAL].commands.dev
+        const commandName =
+          config?.command ?? process.env.NODE_ENV === "production"
+            ? "build"
+            : "dev"
+        const commandConfig = task[$TASK_INTERNAL].commands[commandName]
+
+        // Check if command exists
+        if (commandConfig === undefined) {
+          const allowSkip = task[$TASK_INTERNAL].allowSkip ?? false
+          const strict = config?.strict ?? false
+
+          // If strict mode and not explicitly allowed to skip, fail
+          if (strict && !allowSkip) {
+            failPipeline(
+              new PipelineError(
+                `[${taskName}] No command for "${commandName}" and strict mode is enabled`,
+                PipelineError.TaskFailed
+              )
+            )
+            return
+          }
+
+          // Skip the task
+          console.log(`[${taskName}] skipped "${commandName}"`)
+          config?.onTaskSkipped?.(taskName, commandName)
+          // Mark as skipped - this satisfies dependencies and unblocks dependents
+          // Use setImmediate to ensure scheduler is at idle yield before receiving skip
+          setImmediate(() => {
+            advanceScheduler({ type: "skip", taskId })
+          })
+          return
+        }
 
         const command =
           typeof commandConfig === "string" ? commandConfig : commandConfig.run
@@ -434,6 +532,16 @@ export function pipeline(tasks: Task[]): Pipeline {
 
         let result = input ? scheduler.next(input) : scheduler.next()
 
+        // If we passed skip/complete input and got "idle", the generator processed it
+        // but returned the old yield. Call next() again to get the result after processing.
+        if (
+          input &&
+          (input.type === "skip" || input.type === "complete") &&
+          result.value?.type === "idle"
+        ) {
+          result = scheduler.next()
+        }
+
         while (true) {
           // Check signal again in the loop
           if (signal?.aborted) {
@@ -499,10 +607,17 @@ export function pipeline(tasks: Task[]): Pipeline {
       advanceScheduler()
 
       await completionPromise
-        .then(() => {
+        .then(async () => {
           // Pipeline completed successfully - execute any remaining teardowns
-          // (for tasks that completed successfully)
-          executeAllTeardowns()
+          // (for tasks that completed successfully) and wait for them to complete
+          // Even if teardowns fail, the pipeline still resolves successfully
+          // (teardown errors are reported via onTaskTeardownError)
+          try {
+            await executeAllTeardowns()
+          } catch (teardownError) {
+            // Teardown errors are already reported via onTaskTeardownError
+            // The pipeline still resolves successfully
+          }
         })
         .finally(() => {
           processTerminationListenerCleanups.forEach((cleanup) => cleanup())
@@ -510,6 +625,9 @@ export function pipeline(tasks: Task[]): Pipeline {
         })
     },
   }
+
+  // Store tasks for nested pipeline skip tracking
+  pipelineTasksCache.set(pipelineImpl, tasks)
 
   return pipelineImpl
 }

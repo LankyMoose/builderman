@@ -3,6 +3,7 @@ import type { TaskGraph } from "./types.js"
 export type SchedulerInput =
   | { type: "complete"; taskId: number }
   | { type: "ready"; taskId: number }
+  | { type: "skip"; taskId: number }
 
 export type SchedulerOutput = { type: "run"; taskId: number } | { type: "idle" }
 
@@ -43,19 +44,13 @@ export function* createScheduler(
     }
 
     const input = yield { type: "idle" }
-    if (input?.type === "ready" && input.taskId !== undefined) {
-      markDependencyReady(input.taskId)
-      // After marking a dependency as ready, continue the loop to check for newly runnable tasks
-      // This ensures that if dependents become runnable, they are yielded immediately
-      continue
-    } else if (input?.type === "complete" && input.taskId !== undefined) {
-      completed++
-      // When a task completes, it's also ready (if it wasn't already)
-      // This handles the case where a task completes without a ready check
-      markDependencyReady(input.taskId)
-      // Continue the loop to check for newly runnable tasks
-      continue
-    }
+
+    if (input?.taskId === undefined) continue
+
+    markDependencyReady(input.taskId)
+    if (input.type === "ready") continue
+    completed++
   }
+
   return { type: "done" }
 }
