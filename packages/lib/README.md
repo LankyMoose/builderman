@@ -18,21 +18,23 @@ import { task, pipeline } from "builderman"
 const task1 = task({
   name: "lib:build",
   commands: {
-    dev: "tsc --watch",
     build: "tsc",
+    dev: {
+      run: "tsc --watch",
+      readyWhen: (stdout) => {
+        // mark this task as ready when the process is watching for file changes
+        return stdout.includes("Watching for file changes.")
+      },
+    },
   },
   cwd: "packages/lib",
-  isReady: (stdout) => {
-    // mark this this task as ready when the process is watching for file changes
-    return stdout.includes("Watching for file changes.")
-  },
 })
 
 const task2 = task({
   name: "consumer:dev",
   commands: {
-    dev: "npm run dev",
     build: "npm run build",
+    dev: "npm run dev",
   },
   cwd: "packages/consumer",
   dependencies: [task1],
@@ -125,15 +127,27 @@ Build complex workflows by composing tasks and pipelines together.
 Chain tasks together using `andThen()` to create a pipeline that will run the tasks in order, automatically adding the previous task as a dependency:
 
 ```ts
-import { task, pipeline } from "builderman"
+import { task } from "builderman"
 
 const build = task({
   name: "compile",
-  commands: { dev: "tsc --watch", build: "tsc" },
+  commands: {
+    build: "tsc",
+    dev: {
+      run: "tsc --watch",
+      readyWhen: (output) => output.includes("Watching for file changes."),
+    },
+  },
   cwd: "packages/lib",
 }).andThen({
   name: "bundle",
-  commands: { dev: "rollup --watch", build: "rollup" },
+  commands: {
+    build: "rollup",
+    dev: {
+      run: "rollup --watch",
+      readyWhen: (output) => output.includes("Watching for file changes."),
+    },
+  },
   cwd: "packages/lib",
 })
 

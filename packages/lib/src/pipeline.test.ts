@@ -350,9 +350,14 @@ describe("pipeline", () => {
     const executionOrder: string[] = []
     const task1 = task({
       name: "task1",
-      commands: { dev: "echo task1", build: "echo task1" },
+      commands: {
+        dev: {
+          run: "echo task1",
+          readyWhen: (output) => output.includes("READY"),
+        },
+        build: "echo task1",
+      },
       cwd: ".",
-      isReady: (output) => output.includes("READY"),
     })
     const task2 = task({
       name: "task2",
@@ -475,9 +480,14 @@ describe("pipeline", () => {
     const executionOrder: string[] = []
     const task1 = task({
       name: "task1",
-      commands: { dev: "echo task1", build: "echo task1" },
+      commands: {
+        dev: {
+          run: "echo task1",
+          readyWhen: (output) => output.includes("READY"),
+        },
+        build: "echo task1",
+      },
       cwd: ".",
-      isReady: (output) => output.includes("READY"),
     })
     const task2 = task({
       name: "task2",
@@ -550,15 +560,25 @@ describe("pipeline", () => {
     const executionOrder: string[] = []
     const task1 = task({
       name: "task1",
-      commands: { dev: "echo task1", build: "echo task1" },
+      commands: {
+        dev: {
+          run: "echo task1",
+          readyWhen: (output) => output.includes("TASK1_READY"),
+        },
+        build: "echo task1",
+      },
       cwd: ".",
-      isReady: (output) => output.includes("TASK1_READY"),
     })
     const task2 = task({
       name: "task2",
-      commands: { dev: "echo task2", build: "echo task2" },
+      commands: {
+        dev: {
+          run: "echo task2",
+          readyWhen: (output) => output.includes("TASK2_READY"),
+        },
+        build: "echo task2",
+      },
       cwd: ".",
-      isReady: (output) => output.includes("TASK2_READY"),
     })
     const task3 = task({
       name: "task3",

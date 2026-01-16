@@ -1,23 +1,28 @@
 import type { $TASK_INTERNAL } from "./constants.js"
 import { PipelineError } from "./pipeline.js"
 
+export interface CommandConfig {
+  run: string
+  readyWhen?: (stdout: string) => boolean
+}
+
+export type Command = string | CommandConfig
+
 export interface Commands {
-  dev: string
-  build: string
+  dev: Command
+  build: Command
 }
 
 export interface TaskConfig {
   name: string
   commands: Commands
   cwd: string
-  isReady?: (stdout: string) => boolean
   dependencies?: Task[]
 }
 
-interface TaskInternal extends Omit<TaskConfig, "isReady"> {
+interface TaskInternal extends TaskConfig {
   id: number
   dependencies: Task[]
-  shouldStdoutMarkReady?: (stdout: string) => boolean
   pipeline?: Pipeline // If set, this task represents a nested pipeline
 }
 

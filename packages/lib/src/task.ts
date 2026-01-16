@@ -17,7 +17,6 @@ export function task(config: TaskConfig): Task {
       ...config,
       id: taskId++,
       dependencies: [...(config.dependencies || [])],
-      shouldStdoutMarkReady: config.isReady,
     },
     andThen(nextConfig: Omit<TaskConfig, "dependencies">): Pipeline {
       // Create the next task with the current task as a dependency

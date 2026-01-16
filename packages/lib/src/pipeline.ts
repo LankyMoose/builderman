@@ -156,12 +156,19 @@ export function pipeline(tasks: Task[]): Pipeline {
         }
 
         // Regular task execution
-        const command =
+        const commandConfig =
           process.env.NODE_ENV === "production"
             ? task[$TASK_INTERNAL].commands.build
             : task[$TASK_INTERNAL].commands.dev
 
-        const { cwd, shouldStdoutMarkReady } = task[$TASK_INTERNAL]
+        const command =
+          typeof commandConfig === "string" ? commandConfig : commandConfig.run
+        const readyWhen =
+          typeof commandConfig === "string"
+            ? undefined
+            : commandConfig.readyWhen
+
+        const { cwd } = task[$TASK_INTERNAL]
 
         const taskCwd = path.isAbsolute(cwd)
           ? cwd
@@ -202,7 +209,7 @@ export function pipeline(tasks: Task[]): Pipeline {
         config?.onTaskBegin?.(taskName)
 
         let didMarkReady = false
-        if (!shouldStdoutMarkReady) {
+        if (!readyWhen) {
           advanceScheduler({ type: "ready", taskId })
           didMarkReady = true
         }
@@ -219,7 +226,7 @@ export function pipeline(tasks: Task[]): Pipeline {
           output += chunk
           process.stdout.write(chunk)
 
-          if (!didMarkReady && shouldStdoutMarkReady!(output)) {
+          if (!didMarkReady && readyWhen && readyWhen(output)) {
             advanceScheduler({ type: "ready", taskId })
             didMarkReady = true
           }
