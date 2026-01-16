@@ -53,7 +53,7 @@ export function pipeline(tasks: Task[]): Pipeline {
       const runningPipelines = new Map<number, { stop: () => void }>()
       const teardownCommands = new Map<
         number,
-        { command: string; cwd: string }
+        { command: string; cwd: string; taskName: string }
       >()
       let failed = false
 
@@ -78,18 +78,37 @@ export function pipeline(tasks: Task[]): Pipeline {
         // Remove from map so it doesn't run again
         teardownCommands.delete(taskId)
 
+        config?.onTaskTeardown?.(teardown.taskName)
+
         try {
           const teardownProcess = spawnFn(teardown.command, {
             cwd: teardown.cwd,
             stdio: "inherit",
             shell: true,
           })
-          // Don't wait for teardown to complete, just fire and forget
-          teardownProcess.on("error", () => {
-            // Silently ignore teardown errors
+
+          teardownProcess.on("error", (error) => {
+            const teardownError = new Error(
+              `[${teardown.taskName}] Teardown failed: ${error.message}`
+            )
+            config?.onTaskTeardownError?.(teardown.taskName, teardownError)
           })
-        } catch {
-          // Silently ignore teardown errors
+
+          teardownProcess.on("exit", (code) => {
+            if (code !== 0) {
+              const teardownError = new Error(
+                `[${teardown.taskName}] Teardown failed with exit code ${
+                  code ?? 1
+                }`
+              )
+              config?.onTaskTeardownError?.(teardown.taskName, teardownError)
+            }
+          })
+        } catch (error: any) {
+          const teardownError = new Error(
+            `[${teardown.taskName}] Teardown failed to start: ${error.message}`
+          )
+          config?.onTaskTeardownError?.(teardown.taskName, teardownError)
         }
       }
 
@@ -333,7 +352,11 @@ export function pipeline(tasks: Task[]): Pipeline {
 
         // Store teardown command if provided
         if (teardown) {
-          teardownCommands.set(taskId, { command: teardown, cwd: taskCwd })
+          teardownCommands.set(taskId, {
+            command: teardown,
+            cwd: taskCwd,
+            taskName,
+          })
         }
 
         config?.onTaskBegin?.(taskName)

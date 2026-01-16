@@ -46,6 +46,8 @@ export interface PipelineRunConfig {
   spawn?: typeof import("node:child_process").spawn
   onTaskBegin?: (taskName: string) => void
   onTaskComplete?: (taskName: string) => void
+  onTaskTeardown?: (taskName: string) => void
+  onTaskTeardownError?: (taskName: string, error: Error) => void
   onPipelineError?: (error: PipelineError) => void
   onPipelineComplete?: () => void
 }

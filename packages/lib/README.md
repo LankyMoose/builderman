@@ -118,6 +118,85 @@ try {
 }
 ```
 
+## Teardown
+
+Tasks can specify teardown commands that run automatically when the task completes or fails. Teardowns are executed in reverse dependency order (dependents before dependencies) to ensure proper cleanup.
+
+### Basic Teardown
+
+```ts
+const dbTask = task({
+  name: "database",
+  commands: {
+    dev: {
+      run: "docker-compose up",
+      teardown: "docker-compose down",
+    },
+    build: "echo build",
+  },
+  cwd: ".",
+})
+```
+
+### Teardown Callbacks
+
+You can monitor teardown execution with callbacks. Note that teardown failures do not cause the pipeline to fail - they are fire-and-forget cleanup operations:
+
+```ts
+await pipeline([dbTask]).run({
+  onTaskTeardown: (taskName) => {
+    console.log(`[${taskName}] Starting teardown...`)
+  },
+  onTaskTeardownError: (taskName, error) => {
+    console.error(`[${taskName}] Teardown failed: ${error.message}`)
+    // error is a regular Error instance (not a PipelineError)
+    // Teardown failures do not affect pipeline success/failure
+  },
+})
+```
+
+### Teardown Execution Rules
+
+Teardowns run when:
+
+- ✅ The command entered the running state (regardless of success or failure)
+- ✅ The pipeline completes successfully
+- ✅ The pipeline fails after tasks have started
+
+Teardowns do **not** run when:
+
+- ❌ The task was skipped (no command for the current mode)
+- ❌ The task failed before starting (spawn error)
+- ❌ The pipeline never began execution
+
+### Reverse Dependency Order
+
+Teardowns execute in reverse dependency order to ensure dependents are cleaned up before their dependencies:
+
+```ts
+const db = task({
+  name: "db",
+  commands: {
+    dev: { run: "docker-compose up", teardown: "docker-compose down" },
+    build: "echo build",
+  },
+  cwd: ".",
+})
+
+const api = task({
+  name: "api",
+  commands: {
+    dev: { run: "npm run dev", teardown: "echo stopping api" },
+    build: "echo build",
+  },
+  cwd: ".",
+  dependencies: [db], // api depends on db
+})
+
+// Teardown order: api first, then db
+await pipeline([db, api]).run()
+```
+
 ## Pipeline Composition
 
 Build complex workflows by composing tasks and pipelines together.
