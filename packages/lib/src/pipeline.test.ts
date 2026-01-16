@@ -772,6 +772,352 @@ describe("pipeline", () => {
 
     assert.ok(errorThrown, "Should throw error when signal is already aborted")
   })
+
+  describe("teardown", () => {
+    it("executes teardown on successful completion", async () => {
+      let teardownExecuted = false
+
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: {
+            run: "echo task1",
+            teardown: "echo teardown",
+          },
+          build: "echo task1",
+        },
+        cwd: ".",
+      })
+
+      const mockSpawn = mock.fn((command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+
+        if (command.includes("teardown")) {
+          teardownExecuted = true
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        } else {
+          // Main command
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        }
+
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1])
+      await pipe.run({
+        spawn: mockSpawn as any,
+      })
+
+      assert.ok(
+        teardownExecuted,
+        "Teardown should be executed on successful completion"
+      )
+    })
+
+    it("executes teardown on task failure after starting", async () => {
+      let teardownExecuted = false
+
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: {
+            run: "echo task1",
+            teardown: "echo teardown",
+          },
+          build: "echo task1",
+        },
+        cwd: ".",
+      })
+
+      const mockSpawn = mock.fn((command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+
+        if (command.includes("teardown")) {
+          teardownExecuted = true
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        } else {
+          // Main command fails
+          setImmediate(() => {
+            mockProcess.emit("exit", 1)
+          })
+        }
+
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1])
+      try {
+        await pipe.run({
+          spawn: mockSpawn as any,
+        })
+      } catch {
+        // Expected to fail
+      }
+
+      assert.ok(
+        teardownExecuted,
+        "Teardown should be executed on task failure after starting"
+      )
+    })
+
+    it("executes teardown when pipeline is cancelled", async () => {
+      const abortController = new AbortController()
+      let teardownExecuted = false
+
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: {
+            run: "sleep 1",
+            teardown: "echo teardown",
+          },
+          build: "sleep 1",
+        },
+        cwd: ".",
+      })
+
+      const mockSpawn = mock.fn((command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+
+        if (command.includes("teardown")) {
+          teardownExecuted = true
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        } else {
+          // Main command - don't auto-complete, will be killed
+        }
+
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1])
+      const runPromise = pipe.run({
+        spawn: mockSpawn as any,
+        signal: abortController.signal,
+      })
+
+      // Wait a bit to ensure task starts
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      // Abort the signal
+      abortController.abort()
+
+      try {
+        await runPromise
+      } catch {
+        // Expected to reject
+      }
+
+      // Wait for teardown to execute
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      assert.ok(
+        teardownExecuted,
+        "Teardown should be executed when pipeline is cancelled"
+      )
+    })
+
+    // it("does not execute teardown if task was skipped (no command for mode)", async () => {
+    //   let teardownExecuted = false
+
+    //   const task1 = task({
+    //     name: "task1",
+    //     commands: {
+    //       dev: {
+    //         run: "echo task1",
+    //         teardown: "echo teardown",
+    //       },
+    //       build: "echo task1", // No teardown for build mode
+    //     },
+    //     cwd: ".",
+    //   })
+
+    //   const mockSpawn = mock.fn((command: string) => {
+    //     const mockProcess = new EventEmitter() as ChildProcess
+    //     mockProcess.kill = mock.fn() as any
+    //     mockProcess.stdout = new EventEmitter() as any
+    //     mockProcess.stderr = new EventEmitter() as any
+
+    //     if (command.includes("teardown")) {
+    //       teardownExecuted = true
+    //       setImmediate(() => {
+    //         mockProcess.emit("exit", 0)
+    //       })
+    //     } else {
+    //       // Main command
+    //       setImmediate(() => {
+    //         mockProcess.emit("exit", 0)
+    //       })
+    //     }
+
+    //     return mockProcess
+    //   })
+
+    //   // Run in production mode (build command)
+    //   const originalEnv = process.env.NODE_ENV
+    //   process.env.NODE_ENV = "production"
+
+    //   try {
+    //     const pipe = pipeline([task1])
+    //     await pipe.run({
+    //       spawn: mockSpawn as any,
+    //     })
+    //   } finally {
+    //     process.env.NODE_ENV = originalEnv
+    //   }
+
+    //   assert.ok(
+    //     !teardownExecuted,
+    //     "Teardown should NOT be executed if task was skipped (no command for this mode)"
+    //   )
+    // })
+
+    it("does not execute teardown if task failed before starting command", async () => {
+      let teardownExecuted = false
+
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: {
+            run: "echo task1",
+            teardown: "echo teardown",
+          },
+          build: "echo task1",
+        },
+        cwd: "./nonexistent-directory", // Invalid cwd - will fail before spawning
+      })
+
+      const mockSpawn = mock.fn((command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+
+        if (command.includes("teardown")) {
+          teardownExecuted = true
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        }
+
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1])
+      try {
+        await pipe.run({
+          spawn: mockSpawn as any,
+        })
+      } catch {
+        // Expected to fail
+      }
+
+      assert.ok(
+        !teardownExecuted,
+        "Teardown should NOT be executed if task failed before starting command"
+      )
+    })
+
+    it("does not execute teardown if pipeline never began execution", async () => {
+      let task2Spawned = false
+      let task2TeardownExecuted = false
+
+      const task1 = task({
+        name: "task1",
+        commands: {
+          dev: {
+            run: "echo task1",
+            teardown: "echo teardown",
+          },
+          build: "echo task1",
+        },
+        cwd: ".",
+      })
+
+      const task2 = task({
+        name: "task2",
+        commands: {
+          dev: {
+            run: "echo task2",
+            teardown: "echo teardown2",
+          },
+          build: "echo task2",
+        },
+        cwd: ".",
+        dependencies: [task1],
+      })
+
+      const mockSpawn = mock.fn((command: string) => {
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+
+        if (command.includes("task2")) {
+          task2Spawned = true
+        }
+
+        if (command.includes("teardown2")) {
+          task2TeardownExecuted = true
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        } else if (command.includes("task1")) {
+          // task1 fails immediately
+          setImmediate(() => {
+            mockProcess.emit("exit", 1)
+          })
+        } else if (
+          command.includes("teardown") &&
+          !command.includes("teardown2")
+        ) {
+          // task1's teardown
+          setImmediate(() => {
+            mockProcess.emit("exit", 0)
+          })
+        }
+
+        return mockProcess
+      })
+
+      const pipe = pipeline([task1, task2])
+      try {
+        await pipe.run({
+          spawn: mockSpawn as any,
+        })
+      } catch {
+        // Expected to fail
+      }
+
+      // Wait a bit for any async operations
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      assert.ok(
+        !task2Spawned,
+        "task2 should not be spawned if pipeline fails before it can start"
+      )
+      assert.ok(
+        !task2TeardownExecuted,
+        "task2's teardown should NOT be executed if task2 never started"
+      )
+    })
+  })
 })
 
 describe("pipeline <-> task conversion", () => {

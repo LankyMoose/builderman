@@ -4,6 +4,7 @@ import { PipelineError } from "./pipeline.js"
 export interface CommandConfig {
   run: string
   readyWhen?: (stdout: string) => boolean
+  teardown?: string
 }
 
 export type Command = string | CommandConfig

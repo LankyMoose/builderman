@@ -51,6 +51,10 @@ export function pipeline(tasks: Task[]): Pipeline {
       const signal = config?.signal
       const runningTasks = new Map<number, ChildProcess>()
       const runningPipelines = new Map<number, { stop: () => void }>()
+      const teardownCommands = new Map<
+        number,
+        { command: string; cwd: string }
+      >()
       let failed = false
 
       // Check if signal is already aborted
@@ -66,6 +70,35 @@ export function pipeline(tasks: Task[]): Pipeline {
         completionResolver = resolve
         completionRejector = reject
       })
+
+      const executeTeardown = (taskId: number) => {
+        const teardown = teardownCommands.get(taskId)
+        if (!teardown) return
+
+        // Remove from map so it doesn't run again
+        teardownCommands.delete(taskId)
+
+        try {
+          const teardownProcess = spawnFn(teardown.command, {
+            cwd: teardown.cwd,
+            stdio: "inherit",
+            shell: true,
+          })
+          // Don't wait for teardown to complete, just fire and forget
+          teardownProcess.on("error", () => {
+            // Silently ignore teardown errors
+          })
+        } catch {
+          // Silently ignore teardown errors
+        }
+      }
+
+      const executeAllTeardowns = () => {
+        // Execute all remaining teardown commands
+        for (const taskId of teardownCommands.keys()) {
+          executeTeardown(taskId)
+        }
+      }
 
       const failPipeline = (error: PipelineError) => {
         if (failed) return
@@ -83,6 +116,9 @@ export function pipeline(tasks: Task[]): Pipeline {
             stop()
           } catch {}
         }
+
+        // Execute all teardown commands
+        executeAllTeardowns()
 
         config?.onPipelineError?.(error)
         completionRejector?.(error)
@@ -167,6 +203,8 @@ export function pipeline(tasks: Task[]): Pipeline {
           typeof commandConfig === "string"
             ? undefined
             : commandConfig.readyWhen
+        const teardown =
+          typeof commandConfig === "string" ? undefined : commandConfig.teardown
 
         const { cwd } = task[$TASK_INTERNAL]
 
@@ -206,6 +244,12 @@ export function pipeline(tasks: Task[]): Pipeline {
         })
 
         runningTasks.set(taskId, child)
+
+        // Store teardown command if provided
+        if (teardown) {
+          teardownCommands.set(taskId, { command: teardown, cwd: taskCwd })
+        }
+
         config?.onTaskBegin?.(taskName)
 
         let didMarkReady = false
@@ -237,6 +281,10 @@ export function pipeline(tasks: Task[]): Pipeline {
         })
 
         child.on("error", (error) => {
+          // Task failed before entering running state, so don't execute teardown
+          // Remove teardown from map since it was never actually running
+          teardownCommands.delete(taskId)
+
           failPipeline(
             new PipelineError(
               `[${taskName}] Failed to start: ${error.message}`,
@@ -247,6 +295,10 @@ export function pipeline(tasks: Task[]): Pipeline {
 
         child.on("exit", (code) => {
           runningTasks.delete(taskId)
+
+          // Execute teardown if command entered running state
+          // (runs regardless of success or failure)
+          executeTeardown(taskId)
 
           if (code !== 0) {
             failPipeline(
@@ -338,10 +390,16 @@ export function pipeline(tasks: Task[]): Pipeline {
       // 🚀 Kick off initial runnable tasks
       advanceScheduler()
 
-      await completionPromise.finally(() => {
-        processTerminationListenerCleanups.forEach((cleanup) => cleanup())
-        signalCleanup?.()
-      })
+      await completionPromise
+        .then(() => {
+          // Pipeline completed successfully - execute any remaining teardowns
+          // (for tasks that completed successfully)
+          executeAllTeardowns()
+        })
+        .finally(() => {
+          processTerminationListenerCleanups.forEach((cleanup) => cleanup())
+          signalCleanup?.()
+        })
     },
   }
 
