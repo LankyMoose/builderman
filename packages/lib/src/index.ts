@@ -1,5 +1,6 @@
 export { task } from "./task.js"
-export { pipeline, PipelineError } from "./pipeline.js"
+export { pipeline} from "./pipeline.js"
+export { PipelineError, type PipelineErrorCode } from "./pipeline-error.js"
 
 export type {
   Task,

@@ -1,5 +1,5 @@
 import type { $TASK_INTERNAL } from "./constants.js"
-import { PipelineError } from "./pipeline.js"
+import { PipelineError } from "./pipeline-error.js"
 
 /**
  * Configuration for a command to be executed as part of a task.

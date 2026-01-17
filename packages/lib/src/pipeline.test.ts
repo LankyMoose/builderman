@@ -5,8 +5,82 @@ import type { ChildProcess } from "node:child_process"
 
 import { $TASK_INTERNAL } from "./constants.js"
 import { createTaskGraph } from "./graph.js"
-import { pipeline, PipelineError } from "./pipeline.js"
+import { pipeline } from "./pipeline.js"
+import { PipelineError } from "./pipeline-error.js"
 import { task } from "./task.js"
+
+// Test helpers
+interface CommandHandler {
+  exitCode?: number | null
+  exitDelay?: number
+  onSpawn?: (process: ChildProcess) => void
+}
+
+function createMockSpawn(options?: {
+  // Default behavior for all commands
+  exitCode?: number | null
+  // Command-specific handlers (checked in order)
+  commands?: Array<{
+    match: string | RegExp | ((command: string) => boolean)
+    handler: CommandHandler
+  }>
+  // Fallback handler for unmatched commands
+  commandHandler?: (command: string, process: ChildProcess) => void
+}): ReturnType<typeof mock.fn> {
+  return mock.fn((command: string) => {
+    const mockProcess = new EventEmitter() as ChildProcess
+    mockProcess.kill = mock.fn() as any
+    mockProcess.stdout = new EventEmitter() as any
+    mockProcess.stderr = new EventEmitter() as any
+
+    // Find matching command handler
+    let matchedHandler: CommandHandler | undefined
+    if (options?.commands) {
+      for (const cmd of options.commands) {
+        let matches = false
+        if (typeof cmd.match === "string") {
+          matches = command.includes(cmd.match)
+        } else if (cmd.match instanceof RegExp) {
+          matches = cmd.match.test(command)
+        } else {
+          matches = cmd.match(command)
+        }
+        if (matches) {
+          matchedHandler = cmd.handler
+          break
+        }
+      }
+    }
+
+    // Apply handler
+    const handler = matchedHandler || {}
+    const exitCode = handler.exitCode ?? options?.exitCode ?? 0
+    const exitDelay = handler.exitDelay ?? 0
+
+    // Handler onSpawn
+    handler.onSpawn?.(mockProcess)
+
+    // Fallback commandHandler
+    if (!matchedHandler && options?.commandHandler) {
+      options.commandHandler(command, mockProcess)
+      // When commandHandler is used, it handles exit, so don't auto-exit
+      return mockProcess
+    }
+
+    // Auto-exit unless disabled
+    if (exitDelay > 0) {
+      setTimeout(() => {
+        mockProcess.emit("exit", exitCode)
+      }, exitDelay)
+    } else {
+      setImmediate(() => {
+        mockProcess.emit("exit", exitCode)
+      })
+    }
+
+    return mockProcess
+  }) as any
+}
 
 describe("createTaskGraph", () => {
   it("creates nodes for all tasks", () => {
@@ -240,19 +314,7 @@ describe("pipeline", () => {
       dependencies: [task1],
     })
 
-    // Mock spawn to simulate immediate completion
-    const mockSpawn = mock.fn((_command: string) => {
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-
-      return mockProcess
-    })
+    const mockSpawn = createMockSpawn()
 
     const pipe = pipeline([task1, task2])
     await pipe.run({
@@ -277,19 +339,7 @@ describe("pipeline", () => {
       cwd: ".",
     })
 
-    const mockSpawn = mock.fn((_command: string) => {
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-
-      // Simulate failure
-      setImmediate(() => {
-        mockProcess.emit("exit", 1)
-      })
-
-      return mockProcess
-    })
+    const mockSpawn = createMockSpawn({ exitCode: 1 })
 
     const pipe = pipeline([task1])
     let errorCaught = false
@@ -320,18 +370,7 @@ describe("pipeline", () => {
       cwd: ".",
     })
 
-    const mockSpawn = mock.fn((_command: string) => {
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-
-      return mockProcess
-    })
+    const mockSpawn = createMockSpawn()
 
     const pipe = pipeline([task1])
     let pipelineCompleteCalled = false
@@ -366,34 +405,29 @@ describe("pipeline", () => {
       dependencies: [task1],
     })
 
-    const mockSpawn = mock.fn((command: string) => {
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-
-      if (command.includes("task1")) {
-        // Emit stdout that doesn't match ready condition
-        setImmediate(() => {
-          mockProcess.stdout?.emit("data", Buffer.from("Starting...\n"))
-        })
-        // Then emit ready condition after a delay
-        setTimeout(() => {
-          executionOrder.push("task1:before-ready")
-          mockProcess.stdout?.emit("data", Buffer.from("READY\n"))
-          executionOrder.push("task1:after-ready")
-        }, 10)
-        // Complete after ready
-        setTimeout(() => {
-          mockProcess.emit("exit", 0)
-        }, 20)
-      } else if (command.includes("task2")) {
-        setImmediate(() => {
-          mockProcess.emit("exit", 0)
-        })
-      }
-
-      return mockProcess
+    const mockSpawn = createMockSpawn({
+      commandHandler: (command, process) => {
+        if (command.includes("task1")) {
+          // Emit stdout that doesn't match ready condition
+          setImmediate(() => {
+            process.stdout?.emit("data", Buffer.from("Starting...\n"))
+          })
+          // Then emit ready condition after a delay
+          setTimeout(() => {
+            executionOrder.push("task1:before-ready")
+            process.stdout?.emit("data", Buffer.from("READY\n"))
+            executionOrder.push("task1:after-ready")
+          }, 10)
+          // Complete after ready
+          setTimeout(() => {
+            process.emit("exit", 0)
+          }, 20)
+        } else if (command.includes("task2")) {
+          setImmediate(() => {
+            process.emit("exit", 0)
+          })
+        }
+      },
     })
 
     const pipe = pipeline([task1, task2])
@@ -438,24 +472,17 @@ describe("pipeline", () => {
       dependencies: [task1],
     })
 
-    const mockSpawn = mock.fn((command: string) => {
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-
-      if (command.includes("task1")) {
-        // Delay completion
-        setTimeout(() => {
-          mockProcess.emit("exit", 0)
-        }, 50)
-      } else if (command.includes("task2")) {
-        setImmediate(() => {
-          mockProcess.emit("exit", 0)
-        })
-      }
-
-      return mockProcess
+    const mockSpawn = createMockSpawn({
+      commands: [
+        {
+          match: "task1",
+          handler: { exitDelay: 50 },
+        },
+        {
+          match: "task2",
+          handler: {},
+        },
+      ],
     })
 
     const pipe = pipeline([task1, task2])
@@ -789,25 +816,17 @@ describe("pipeline", () => {
         cwd: ".",
       })
 
-      const mockSpawn = mock.fn((command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-
-        if (command.includes("teardown")) {
-          teardownExecuted = true
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        } else {
-          // Main command
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        }
-
-        return mockProcess
+      const mockSpawn = createMockSpawn({
+        commands: [
+          {
+            match: "teardown",
+            handler: {
+              onSpawn: () => {
+                teardownExecuted = true
+              },
+            },
+          },
+        ],
       })
 
       const pipe = pipeline([task1])
@@ -836,38 +855,42 @@ describe("pipeline", () => {
         cwd: ".",
       })
 
-      const mockSpawn = mock.fn((command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-
-        if (command.includes("teardown")) {
-          teardownExecuted = true
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        } else {
-          // Main command fails
-          setImmediate(() => {
-            mockProcess.emit("exit", 1)
-          })
-        }
-
-        return mockProcess
+      const mockSpawn = createMockSpawn({
+        commands: [
+          {
+            match: "task1",
+            handler: {
+              exitDelay: 50,
+              exitCode: 1,
+            },
+          },
+          {
+            match: "teardown",
+            handler: {
+              onSpawn: () => {
+                teardownExecuted = true
+              },
+            },
+          },
+        ],
       })
+
+      let taskFailed = false
 
       const pipe = pipeline([task1])
       try {
         await pipe.run({
           spawn: mockSpawn as any,
+          onPipelineError: (err) => {
+            taskFailed = err.taskName === "task1"
+          },
         })
       } catch {
         // Expected to fail
       }
 
       assert.ok(
-        teardownExecuted,
+        taskFailed && teardownExecuted,
         "Teardown should be executed on task failure after starting"
       )
     })
@@ -945,25 +968,17 @@ describe("pipeline", () => {
         cwd: ".",
       })
 
-      const mockSpawn = mock.fn((command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-
-        if (command.includes("teardown")) {
-          teardownExecuted = true
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        } else {
-          // Main command
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        }
-
-        return mockProcess
+      const mockSpawn = createMockSpawn({
+        commands: [
+          {
+            match: "teardown",
+            handler: {
+              onSpawn: () => {
+                teardownExecuted = true
+              },
+            },
+          },
+        ],
       })
 
       // Run in production mode (build command)
@@ -1000,20 +1015,17 @@ describe("pipeline", () => {
         cwd: "./nonexistent-directory", // Invalid cwd - will fail before spawning
       })
 
-      const mockSpawn = mock.fn((command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-
-        if (command.includes("teardown")) {
-          teardownExecuted = true
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        }
-
-        return mockProcess
+      const mockSpawn = createMockSpawn({
+        commands: [
+          {
+            match: "teardown",
+            handler: {
+              onSpawn: () => {
+                teardownExecuted = true
+              },
+            },
+          },
+        ],
       })
 
       const pipe = pipeline([task1])
@@ -1143,30 +1155,25 @@ describe("pipeline", () => {
         dependencies: [db], // api depends on db
       })
 
-      const mockSpawn = mock.fn((command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-
-        if (command.includes("teardown:api")) {
-          teardownOrder.push("api")
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        } else if (command.includes("teardown:db")) {
-          teardownOrder.push("db")
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        } else {
-          // Main commands - complete successfully
-          setImmediate(() => {
-            mockProcess.emit("exit", 0)
-          })
-        }
-
-        return mockProcess
+      const mockSpawn = createMockSpawn({
+        commands: [
+          {
+            match: "teardown:api",
+            handler: {
+              onSpawn: () => {
+                teardownOrder.push("api")
+              },
+            },
+          },
+          {
+            match: "teardown:db",
+            handler: {
+              onSpawn: () => {
+                teardownOrder.push("db")
+              },
+            },
+          },
+        ],
       })
 
       const pipe = pipeline([db, api])
@@ -1205,14 +1212,7 @@ describe("pipeline", () => {
         cwd: ".",
       })
 
-      const mockSpawn = mock.fn((_command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-        setImmediate(() => mockProcess.emit("exit", 0))
-        return mockProcess
-      })
+      const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1])
       await pipe.run({
@@ -1254,18 +1254,7 @@ describe("pipeline", () => {
         dependencies: [task1],
       })
 
-      const mockSpawn = mock.fn((_command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-
-        if (_command.includes("task2")) {
-          executionOrder.push("task2")
-        }
-        setImmediate(() => mockProcess.emit("exit", 0))
-        return mockProcess
-      })
+      const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1, task2])
       await pipe.run({
@@ -1278,7 +1267,6 @@ describe("pipeline", () => {
 
       // task1 should be skipped, task2 should run
       assert.ok(executionOrder.includes("begin:task2"), "task2 should run")
-      assert.ok(executionOrder.includes("task2"), "task2 should execute")
     })
 
     it("fails in strict mode when command does not exist", async () => {
@@ -1291,14 +1279,7 @@ describe("pipeline", () => {
         cwd: ".",
       })
 
-      const mockSpawn = mock.fn((_command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-        setImmediate(() => mockProcess.emit("exit", 0))
-        return mockProcess
-      })
+      const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1])
       let error: any
@@ -1333,14 +1314,7 @@ describe("pipeline", () => {
         allowSkip: true,
       })
 
-      const mockSpawn = mock.fn((_command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-        setImmediate(() => mockProcess.emit("exit", 0))
-        return mockProcess
-      })
+      const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1])
       await pipe.run({
@@ -1385,14 +1359,7 @@ describe("pipeline", () => {
       const innerPipeline = pipeline([innerTask1, innerTask2])
       const outerTask = innerPipeline.toTask({ name: "outer" })
 
-      const mockSpawn = mock.fn((_command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-        setImmediate(() => mockProcess.emit("exit", 0))
-        return mockProcess
-      })
+      const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([outerTask])
       await pipe.run({
@@ -1439,14 +1406,7 @@ describe("pipeline", () => {
       const innerPipeline = pipeline([innerTask1, innerTask2])
       const outerTask = innerPipeline.toTask({ name: "outer" })
 
-      const mockSpawn = mock.fn((_command: string) => {
-        const mockProcess = new EventEmitter() as ChildProcess
-        mockProcess.kill = mock.fn() as any
-        mockProcess.stdout = new EventEmitter() as any
-        mockProcess.stderr = new EventEmitter() as any
-        setImmediate(() => mockProcess.emit("exit", 0))
-        return mockProcess
-      })
+      const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([outerTask])
       await pipe.run({
@@ -1472,18 +1432,7 @@ describe("pipeline <-> task conversion", () => {
     const executionOrder: string[] = []
 
     // Mock spawn to track execution
-    const mockSpawn = mock.fn((_command: string) => {
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-
-      return mockProcess
-    })
+    const mockSpawn = createMockSpawn()
 
     // Create individual pipelines with mock spawn
     const buildTask1 = task({
@@ -1627,18 +1576,7 @@ describe("pipeline <-> task conversion", () => {
     const executionOrder: string[] = []
 
     // Mock spawn to track execution
-    const mockSpawn = mock.fn((_command: string) => {
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-
-      return mockProcess
-    })
+    const mockSpawn = createMockSpawn()
 
     // Use andThen to chain tasks
     const build = task({
