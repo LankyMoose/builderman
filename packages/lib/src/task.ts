@@ -3,8 +3,6 @@ import { validateTasks } from "./util.js"
 import { pipeline } from "./pipeline.js"
 import type { TaskConfig, Task, Pipeline } from "./types.js"
 
-let taskId = 0
-
 /**
  * Creates a task configuration.
  * @param config - The configuration for the task.
@@ -26,7 +24,7 @@ export function task(config: TaskConfig): Task {
     name: config.name,
     [$TASK_INTERNAL]: {
       ...config,
-      id: taskId++,
+      id: crypto.randomUUID(),
       dependencies: [...(config.dependencies || [])],
     },
     andThen(nextConfig: Omit<TaskConfig, "dependencies">): Pipeline {

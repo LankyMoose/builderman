@@ -20,8 +20,8 @@ export interface TaskExecutorConfig {
   signal?: AbortSignal
   config?: PipelineRunConfig
   graph: TaskGraph
-  runningTasks: Map<number, ChildProcess>
-  runningPipelines: Map<number, { stop: () => void }>
+  runningTasks: Map<string, ChildProcess>
+  runningPipelines: Map<string, { stop: () => void }>
   teardownManager: TeardownManager
   pipelineTasksCache: WeakMap<Pipeline, Task[]>
   failPipeline: (error: PipelineError) => Promise<void>
@@ -66,7 +66,7 @@ export function executeTask(
 }
 
 function executeNestedPipeline(
-  taskId: number,
+  taskId: string,
   taskName: string,
   nestedPipeline: Pipeline,
   executorConfig: TaskExecutorConfig
@@ -124,7 +124,7 @@ function executeNestedPipeline(
         nestedSkippedCount++
         config?.onTaskSkipped?.(`${taskName}:${nestedTaskName}`, mode)
       },
-      onPipelineError: (error: any) => {
+      onPipelineError: (error) => {
         if (pipelineStopped) return
         runningPipelines.delete(taskId)
         // error is already a PipelineError
@@ -171,7 +171,7 @@ function executeNestedPipeline(
 
 function executeRegularTask(
   task: Task,
-  taskId: number,
+  taskId: string,
   taskName: string,
   executorConfig: TaskExecutorConfig
 ): void {

@@ -62,8 +62,8 @@ export function pipeline(tasks: Task[]): Pipeline {
     async run(config): Promise<void> {
       const spawnFn = config?.spawn ?? spawn
       const signal = config?.signal
-      const runningTasks = new Map<number, ChildProcess>()
-      const runningPipelines = new Map<number, { stop: () => void }>()
+      const runningTasks = new Map<string, ChildProcess>()
+      const runningPipelines = new Map<string, { stop: () => void }>()
       let failed = false
 
       // Check if signal is already aborted

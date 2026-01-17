@@ -76,7 +76,7 @@ export interface TaskConfig {
 }
 
 interface TaskInternal extends TaskConfig {
-  id: number
+  id: string
   dependencies: Task[]
   pipeline?: Pipeline // If set, this task represents a nested pipeline
 }
@@ -208,12 +208,12 @@ export interface Pipeline {
 
 export interface TaskNode {
   task: Task
-  dependencies: Set<number> // ids of dependent tasks
-  dependents: Set<number> // ids of tasks that depend on this one
+  dependencies: Set<string> // ids of dependent tasks
+  dependents: Set<string> // ids of tasks that depend on this one
 }
 
 export interface TaskGraph {
-  nodes: Map<number, TaskNode>
+  nodes: Map<string, TaskNode>
   /**
    * Validates the graph for circular dependencies.
    * @throws Error if circular dependencies are detected

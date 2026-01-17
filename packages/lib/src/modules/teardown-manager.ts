@@ -13,8 +13,8 @@ export interface TeardownManagerConfig {
 }
 
 export interface TeardownManager {
-  register(taskId: number, teardown: TeardownCommand): void
-  unregister(taskId: number): void
+  register(taskId: string, teardown: TeardownCommand): void
+  unregister(taskId: string): void
   executeAll(graph: TaskGraph): Promise<void>
 }
 
@@ -25,12 +25,12 @@ export interface TeardownManager {
 export function createTeardownManager(
   config: TeardownManagerConfig
 ): TeardownManager {
-  const teardownCommands = new Map<number, TeardownCommand>()
+  const teardownCommands = new Map<string, TeardownCommand>()
 
   /**
    * Executes a single teardown command.
    */
-  const executeTeardown = (taskId: number): Promise<void> => {
+  const executeTeardown = (taskId: string): Promise<void> => {
     const teardown = teardownCommands.get(taskId)
     if (!teardown) return Promise.resolve()
 
@@ -88,14 +88,14 @@ export function createTeardownManager(
     /**
      * Registers a teardown command for a task.
      */
-    register(taskId: number, teardown: TeardownCommand): void {
+    register(taskId: string, teardown: TeardownCommand): void {
       teardownCommands.set(taskId, teardown)
     },
 
     /**
      * Removes a teardown command (e.g., if task failed before starting).
      */
-    unregister(taskId: number): void {
+    unregister(taskId: string): void {
       teardownCommands.delete(taskId)
     },
 
@@ -127,13 +127,13 @@ export function createTeardownManager(
  * If api depends on db, we want: api first, then db.
  */
 function getReverseDependencyOrder(
-  taskIds: number[],
+  taskIds: string[],
   graph: TaskGraph
-): number[] {
+): string[] {
   const taskIdSet = new Set(taskIds)
 
   // Count how many dependencies each task has (within the teardown set)
-  const dependencyCount = new Map<number, number>()
+  const dependencyCount = new Map<string, number>()
   for (const taskId of taskIds) {
     const node = graph.nodes.get(taskId)
     if (node) {
@@ -148,9 +148,9 @@ function getReverseDependencyOrder(
   }
 
   // Build result in reverse order
-  const result: number[] = []
-  const visited = new Set<number>()
-  const queue: number[] = []
+  const result: string[] = []
+  const visited = new Set<string>()
+  const queue: string[] = []
 
   // Find leaf nodes (tasks with no dependencies in teardown set)
   for (const taskId of taskIds) {

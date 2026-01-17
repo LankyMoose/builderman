@@ -1,18 +1,18 @@
 import type { TaskGraph } from "./types.js"
 
 export type SchedulerInput =
-  | { type: "complete"; taskId: number }
-  | { type: "ready"; taskId: number }
-  | { type: "skip"; taskId: number }
+  | { type: "complete"; taskId: string }
+  | { type: "ready"; taskId: string }
+  | { type: "skip"; taskId: string }
 
-export type SchedulerOutput = { type: "run"; taskId: number } | { type: "idle" }
+export type SchedulerOutput = { type: "run"; taskId: string } | { type: "idle" }
 
 export function* createScheduler(
   graph: TaskGraph
 ): Generator<SchedulerOutput, { type: "done" }, SchedulerInput> {
-  const remainingReadyDeps = new Map<number, number>()
-  const readyTasks = new Set<number>() // Track which tasks are already ready
-  const runnable: number[] = []
+  const remainingReadyDeps = new Map<string, number>()
+  const readyTasks = new Set<string>() // Track which tasks are already ready
+  const runnable: string[] = []
   let completed = 0
 
   for (const [id, node] of graph.nodes) {
@@ -22,7 +22,7 @@ export function* createScheduler(
     }
   }
 
-  const markDependencyReady = (taskId: number) => {
+  const markDependencyReady = (taskId: string) => {
     if (readyTasks.has(taskId)) {
       return // Already marked as ready, don't double-count
     }

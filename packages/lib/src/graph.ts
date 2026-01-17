@@ -2,7 +2,7 @@ import { $TASK_INTERNAL } from "./constants.js"
 import type { TaskNode, TaskGraph, Task } from "./types.js"
 
 export function createTaskGraph(tasks: Task[]): TaskGraph {
-  const nodes = new Map<number, TaskNode>()
+  const nodes = new Map<string, TaskNode>()
 
   // Create nodes for all tasks
   for (const task of tasks) {
@@ -35,10 +35,10 @@ export function createTaskGraph(tasks: Task[]): TaskGraph {
     nodes,
     validate() {
       // Use DFS to detect cycles
-      const visited = new Set<number>()
-      const recursionStack = new Set<number>()
+      const visited = new Set<string>()
+      const recursionStack = new Set<string>()
 
-      const visit = (nodeId: number, path: number[]): void => {
+      const visit = (nodeId: string, path: string[]): void => {
         if (recursionStack.has(nodeId)) {
           // Found a cycle - build the cycle path
           const cycleStart = path.indexOf(nodeId)
@@ -70,7 +70,7 @@ export function createTaskGraph(tasks: Task[]): TaskGraph {
     simplify() {
       // Remove transitive dependencies using Floyd-Warshall approach
       // For each node, if there's a path through another node, remove the direct edge
-      const reachable = new Map<number, Set<number>>()
+      const reachable = new Map<string, Set<string>>()
 
       // Initialize reachable sets with direct dependencies
       for (const [id, node] of nodes) {
@@ -92,7 +92,7 @@ export function createTaskGraph(tasks: Task[]): TaskGraph {
 
       // Remove transitive edges
       for (const [nodeId, node] of nodes) {
-        const toRemove = new Set<number>()
+        const toRemove = new Set<string>()
         for (const depId of node.dependencies) {
           // Check if there's a path from this node to dep through another dependency
           for (const otherDep of node.dependencies) {
