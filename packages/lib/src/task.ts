@@ -1,6 +1,6 @@
 import { $TASK_INTERNAL } from "./constants.js"
 import { validateTasks } from "./util.js"
-import type { TaskConfig, Task } from "./types.js"
+import type { TaskConfig, Task, Commands } from "./types.js"
 
 /**
  * Creates a task configuration.
@@ -19,6 +19,12 @@ export function task(config: TaskConfig): Task {
     [$TASK_INTERNAL]: {
       ...config,
       id: crypto.randomUUID(),
+      commands: Object.fromEntries(
+        Object.entries(config.commands).map(([key, value]) => [
+          key,
+          typeof value === "string" ? value : { ...value },
+        ])
+      ),
       dependencies: [...(config.dependencies || [])],
     },
   }

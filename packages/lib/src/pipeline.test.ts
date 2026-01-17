@@ -367,7 +367,7 @@ describe("pipeline", () => {
     assert.strictEqual(result.stats.summary.total, 1)
     assert.strictEqual(result.stats.summary.completed, 0)
     assert.strictEqual(result.stats.summary.failed, 1)
-    
+
     // Check task stats
     const taskStats = Object.values(result.stats.tasks)[0]
     assert.strictEqual(taskStats.status, "failed")
@@ -399,7 +399,7 @@ describe("pipeline", () => {
     assert.strictEqual(result.stats.summary.total, 1)
     assert.strictEqual(result.stats.summary.completed, 1)
     assert.strictEqual(result.stats.summary.failed, 0)
-    
+
     // Check task stats
     const taskStats = Object.values(result.stats.tasks)[0]
     assert.strictEqual(taskStats.status, "completed")
@@ -859,7 +859,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.status, "success")
-      
+
       // Check teardown status
       const taskStats = Object.values(result.stats.tasks)[0]
       assert.strictEqual(taskStats.teardown?.status, "completed")
@@ -912,7 +912,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, false)
       assert.strictEqual(result.stats.status, "failed")
-      
+
       // Check teardown status
       const taskStats = Object.values(result.stats.tasks)[0]
       assert.strictEqual(taskStats.teardown?.status, "completed")
@@ -973,7 +973,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, false)
       assert.strictEqual(result.stats.status, "aborted")
-      
+
       // Check teardown status
       const taskStats = Object.values(result.stats.tasks)[0]
       assert.strictEqual(taskStats.teardown?.status, "completed")
@@ -1021,14 +1021,12 @@ describe("pipeline", () => {
         spawn: mockSpawn as any,
       })
       process.env.NODE_ENV = originalEnv
-      
+
       assert.strictEqual(result.ok, true)
       const taskStats = Object.values(result.stats.tasks)[0]
       assert.strictEqual(taskStats.status, "skipped")
       // Teardown is undefined for skipped tasks (never registered)
       assert.strictEqual(taskStats.teardown, undefined)
-      
-
 
       assert.ok(
         !teardownExecuted,
@@ -1162,7 +1160,7 @@ describe("pipeline", () => {
         !task2TeardownExecuted,
         "task2's teardown should NOT be executed if task2 never started"
       )
-      
+
       // Check task2 stats
       const task2Stats = Object.values(result.stats.tasks).find(
         (t) => t.name === "task2"
@@ -1277,7 +1275,7 @@ describe("pipeline", () => {
         0,
         "No command should be executed"
       )
-      
+
       // Check result
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.status, "success")
@@ -1355,7 +1353,7 @@ describe("pipeline", () => {
         "Error should mention strict mode"
       )
       assert.strictEqual(result.stats.status, "failed")
-      
+
       // Check task stats
       const taskStats = Object.values(result.stats.tasks)[0]
       assert.strictEqual(taskStats.status, "failed")
@@ -1726,7 +1724,11 @@ describe("stats field validation", () => {
       assert.ok(taskStats.startedAt !== undefined)
       assert.ok(taskStats.finishedAt !== undefined)
       assert.ok(taskStats.durationMs !== undefined)
-      if (taskStats.startedAt !== undefined && taskStats.finishedAt !== undefined && taskStats.durationMs !== undefined) {
+      if (
+        taskStats.startedAt !== undefined &&
+        taskStats.finishedAt !== undefined &&
+        taskStats.durationMs !== undefined
+      ) {
         assert.ok(taskStats.startedAt > 0)
         assert.ok(taskStats.finishedAt >= taskStats.startedAt)
         assert.ok(taskStats.durationMs >= 0)
@@ -1753,7 +1755,9 @@ describe("stats field validation", () => {
       const taskStats = Object.values(result.stats.tasks)[0]
 
       assert.ok(taskStats.teardown !== undefined)
-      assert.ok(["not-run", "completed", "failed"].includes(taskStats.teardown!.status))
+      assert.ok(
+        ["not-run", "completed", "failed"].includes(taskStats.teardown!.status)
+      )
       assert.strictEqual(taskStats.teardown!.status, "completed")
       assert.strictEqual(taskStats.teardown!.error, undefined)
     })
@@ -1886,20 +1890,20 @@ describe("stats field validation", () => {
 
       assert.strictEqual(result.ok, false)
       assert.strictEqual(result.stats.status, "aborted")
-      
+
       // Verify summary fields are all present and are numbers
       assert.strictEqual(typeof result.stats.summary.total, "number")
       assert.strictEqual(typeof result.stats.summary.completed, "number")
       assert.strictEqual(typeof result.stats.summary.failed, "number")
       assert.strictEqual(typeof result.stats.summary.skipped, "number")
       assert.strictEqual(typeof result.stats.summary.running, "number")
-      
+
       // When aborted, the running count tracks tasks that were still running
       // Tasks that were aborted may be marked as "aborted" status (not counted in summary)
       // or "failed" status. The important thing is that all summary fields are present.
       assert.ok(result.stats.summary.running >= 0)
       assert.ok(result.stats.summary.total >= 0)
-      
+
       // Verify that tasks exist and have proper status
       const taskStats = Object.values(result.stats.tasks)
       assert.ok(taskStats.length > 0)
@@ -1909,7 +1913,7 @@ describe("stats field validation", () => {
       )
       assert.ok(
         affectedTasks.length > 0 || result.stats.summary.running > 0,
-        `At least one task should be affected. Summary: ${JSON.stringify(result.stats.summary)}, Task statuses: ${taskStats.map(t => t.status).join(", ")}`
+        `At least one task should be affected. Summary: ${JSON.stringify(result.stats.summary)}, Task statuses: ${taskStats.map((t) => t.status).join(", ")}`
       )
     })
 
@@ -1942,12 +1946,24 @@ describe("stats field validation", () => {
 
       const taskStats = Object.values(result.stats.tasks)[0]
       assert.ok(["aborted", "failed"].includes(taskStats.status))
-      assert.ok(taskStats.startedAt !== undefined, "startedAt should be defined")
-      assert.ok(taskStats.finishedAt !== undefined, "finishedAt should be defined")
-      assert.ok(taskStats.durationMs !== undefined, "durationMs should be defined")
-      
+      assert.ok(
+        taskStats.startedAt !== undefined,
+        "startedAt should be defined"
+      )
+      assert.ok(
+        taskStats.finishedAt !== undefined,
+        "finishedAt should be defined"
+      )
+      assert.ok(
+        taskStats.durationMs !== undefined,
+        "durationMs should be defined"
+      )
+
       // TypeScript type narrowing
-      if (taskStats.startedAt !== undefined && taskStats.finishedAt !== undefined) {
+      if (
+        taskStats.startedAt !== undefined &&
+        taskStats.finishedAt !== undefined
+      ) {
         assert.ok(taskStats.finishedAt >= taskStats.startedAt)
       }
     })

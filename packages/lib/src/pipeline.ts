@@ -21,68 +21,6 @@ import type {
 // Store tasks for each pipeline (for nested pipeline skip tracking)
 const pipelineTasksCache = new WeakMap<Pipeline, Task[]>()
 
-function buildResult(
-  error: PipelineError | null,
-  startedAt: number,
-  command: string,
-  taskStats: Map<string, TaskStats>,
-  status: "success" | "failed" | "aborted"
-): RunResult {
-  const finishedAt = Date.now()
-  const durationMs = finishedAt - startedAt
-
-  // Convert task stats map to record
-  const tasks: Record<string, TaskStats> = {}
-  for (const [taskId, stats] of taskStats) {
-    tasks[taskId] = stats
-  }
-
-  // Calculate summary
-  let completed = 0
-  let failed = 0
-  let skipped = 0
-  let running = 0
-
-  for (const stats of taskStats.values()) {
-    switch (stats.status) {
-      case "completed":
-        completed++
-        break
-      case "failed":
-        failed++
-        break
-      case "skipped":
-        skipped++
-        break
-      case "running":
-        running++
-        break
-    }
-  }
-
-  const pipelineStats: PipelineStats = {
-    command,
-    startedAt,
-    finishedAt,
-    durationMs,
-    status,
-    tasks,
-    summary: {
-      total: taskStats.size,
-      completed,
-      failed,
-      skipped,
-      running,
-    },
-  }
-
-  if (error) {
-    return { ok: false, error, stats: pipelineStats }
-  } else {
-    return { ok: true, error: null, stats: pipelineStats }
-  }
-}
-
 /**
  * Creates a pipeline that manages task execution with dependency-based coordination.
  * @param tasks - The tasks to include in the pipeline.
@@ -93,19 +31,20 @@ function buildResult(
  * await pipeline([task1, task2]).run()
  */
 export function pipeline(tasks: Task[]): Pipeline {
-  validateTasks(tasks)
+  const tasksClone = [...tasks]
+  validateTasks(tasksClone)
 
-  const graph = createTaskGraph(tasks)
+  const graph = createTaskGraph(tasksClone)
   graph.validate()
   graph.simplify()
 
   const pipelineImpl: Pipeline = {
-    toTask(config: PipelineTaskConfig): Task {
+    toTask({ name, dependencies }: PipelineTaskConfig): Task {
       const syntheticTask = task({
-        name: config.name,
+        name,
         commands: {},
-        cwd: ".", // Dummy cwd
-        dependencies: [...(config.dependencies || [])],
+        cwd: ".",
+        dependencies,
       })
 
       // Mark this task as a pipeline task so it can be detected by the executor
@@ -316,7 +255,69 @@ export function pipeline(tasks: Task[]): Pipeline {
   }
 
   // Store tasks for nested pipeline skip tracking
-  pipelineTasksCache.set(pipelineImpl, tasks)
+  pipelineTasksCache.set(pipelineImpl, tasksClone)
 
   return pipelineImpl
+}
+
+function buildResult(
+  error: PipelineError | null,
+  startedAt: number,
+  command: string,
+  taskStats: Map<string, TaskStats>,
+  status: "success" | "failed" | "aborted"
+): RunResult {
+  const finishedAt = Date.now()
+  const durationMs = finishedAt - startedAt
+
+  // Convert task stats map to record
+  const tasks: Record<string, TaskStats> = {}
+  for (const [taskId, stats] of taskStats) {
+    tasks[taskId] = stats
+  }
+
+  // Calculate summary
+  let completed = 0
+  let failed = 0
+  let skipped = 0
+  let running = 0
+
+  for (const stats of taskStats.values()) {
+    switch (stats.status) {
+      case "completed":
+        completed++
+        break
+      case "failed":
+        failed++
+        break
+      case "skipped":
+        skipped++
+        break
+      case "running":
+        running++
+        break
+    }
+  }
+
+  const pipelineStats: PipelineStats = {
+    command,
+    startedAt,
+    finishedAt,
+    durationMs,
+    status,
+    tasks,
+    summary: {
+      total: taskStats.size,
+      completed,
+      failed,
+      skipped,
+      running,
+    },
+  }
+
+  if (error) {
+    return { ok: false, error, stats: pipelineStats }
+  } else {
+    return { ok: true, error: null, stats: pipelineStats }
+  }
 }
