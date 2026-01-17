@@ -55,12 +55,7 @@ export function executeTask(
 
   // Handle pipeline tasks
   if (nestedPipeline) {
-    executeNestedPipeline(
-      taskId,
-      taskName,
-      nestedPipeline,
-      executorConfig
-    )
+    executeNestedPipeline(taskId, taskName, nestedPipeline, executorConfig)
     return
   }
 
@@ -94,9 +89,7 @@ function executeNestedPipeline(
     : 0
 
   const commandName =
-    (config?.command ?? process.env.NODE_ENV === "production")
-      ? "build"
-      : "dev"
+    (config?.command ?? process.env.NODE_ENV === "production") ? "build" : "dev"
 
   // Mark as ready immediately (pipeline entry nodes will handle their own ready state)
   const startedAt = Date.now()
@@ -139,65 +132,13 @@ function executeNestedPipeline(
         nestedSkippedCount++
         config?.onTaskSkipped?.(`${taskName}:${nestedTaskName}`, mode)
       },
-      onPipelineError: (error) => {
-        if (pipelineStopped) return
-        runningPipelines.delete(taskId)
-        // error is already a PipelineError
-        const finishedAt = Date.now()
-        updateTaskStatus(taskId, {
-          status: "failed",
-          finishedAt,
-          durationMs: finishedAt - startedAt,
-          error,
-        })
-        failPipeline(error)
-      },
-      onPipelineComplete: () => {
-        if (pipelineStopped) return
-        runningPipelines.delete(taskId)
-
-        // Determine nested pipeline result based on skip behavior:
-        // - If all inner tasks are skipped → outer task is skipped
-        // - If some run, some skip → outer task is completed
-        // - If any fail → outer task fails (handled in onPipelineError)
-        const commandName =
-          (config?.command ?? process.env.NODE_ENV === "production")
-            ? "build"
-            : "dev"
-
-        if (
-          nestedSkippedCount === nestedTotalTasks &&
-          nestedTotalTasks > 0
-        ) {
-          // All tasks were skipped
-          const finishedAt = Date.now()
-          updateTaskStatus(taskId, {
-            status: "skipped",
-            finishedAt,
-            durationMs: finishedAt - startedAt,
-          })
-          config?.onTaskSkipped?.(taskName, commandName)
-          setImmediate(() => {
-            advanceScheduler({ type: "skip", taskId })
-          })
-        } else {
-          // Some tasks ran (and completed successfully)
-          const finishedAt = Date.now()
-          updateTaskStatus(taskId, {
-            status: "completed",
-            finishedAt,
-            durationMs: finishedAt - startedAt,
-          })
-          config?.onTaskComplete?.(taskName)
-          advanceScheduler({ type: "complete", taskId })
-        }
-      },
     })
     .then((result) => {
       if (pipelineStopped) return
-      // Check if nested pipeline failed
+      runningPipelines.delete(taskId)
+
       if (!result.ok) {
-        runningPipelines.delete(taskId)
+        // Nested pipeline failed
         const finishedAt = Date.now()
         updateTaskStatus(taskId, {
           status: "failed",
@@ -206,19 +147,36 @@ function executeNestedPipeline(
           error: result.error,
         })
         failPipeline(result.error)
+        return
       }
-    })
-    .catch((error) => {
-      if (pipelineStopped) return
-      runningPipelines.delete(taskId)
-      const finishedAt = Date.now()
-      updateTaskStatus(taskId, {
-        status: "failed",
-        finishedAt,
-        durationMs: finishedAt - startedAt,
-        error: error instanceof Error ? error : new Error(String(error)),
-      })
-      failPipeline(error)
+
+      // Determine nested pipeline result based on skip behavior:
+      // - If all inner tasks are skipped → outer task is skipped
+      // - If some run, some skip → outer task is completed
+      // - If any fail → outer task fails (handled above)
+      if (nestedSkippedCount === nestedTotalTasks && nestedTotalTasks > 0) {
+        // All tasks were skipped
+        const finishedAt = Date.now()
+        updateTaskStatus(taskId, {
+          status: "skipped",
+          finishedAt,
+          durationMs: finishedAt - startedAt,
+        })
+        config?.onTaskSkipped?.(taskName, commandName)
+        setImmediate(() => {
+          advanceScheduler({ type: "skip", taskId })
+        })
+      } else {
+        // Some tasks ran (and completed successfully)
+        const finishedAt = Date.now()
+        updateTaskStatus(taskId, {
+          status: "completed",
+          finishedAt,
+          durationMs: finishedAt - startedAt,
+        })
+        config?.onTaskComplete?.(taskName)
+        advanceScheduler({ type: "complete", taskId })
+      }
     })
 }
 
@@ -240,9 +198,7 @@ function executeRegularTask(
   } = executorConfig
 
   const commandName =
-    (config?.command ?? process.env.NODE_ENV === "production")
-      ? "build"
-      : "dev"
+    (config?.command ?? process.env.NODE_ENV === "production") ? "build" : "dev"
   const commandConfig = task[$TASK_INTERNAL].commands[commandName]
 
   // Check if command exists
@@ -288,9 +244,7 @@ function executeRegularTask(
   const command =
     typeof commandConfig === "string" ? commandConfig : commandConfig.run
   const readyWhen =
-    typeof commandConfig === "string"
-      ? undefined
-      : commandConfig.readyWhen
+    typeof commandConfig === "string" ? undefined : commandConfig.readyWhen
   const readyTimeout =
     typeof commandConfig === "string"
       ? Infinity
@@ -300,9 +254,7 @@ function executeRegularTask(
 
   const { cwd } = task[$TASK_INTERNAL]
 
-  const taskCwd = path.isAbsolute(cwd)
-    ? cwd
-    : path.resolve(process.cwd(), cwd)
+  const taskCwd = path.isAbsolute(cwd) ? cwd : path.resolve(process.cwd(), cwd)
 
   if (!fs.existsSync(taskCwd)) {
     const finishedAt = Date.now()

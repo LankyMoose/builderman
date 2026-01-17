@@ -48,8 +48,9 @@ export function* createScheduler(
     if (input?.taskId === undefined) continue
 
     markDependencyReady(input.taskId)
-    if (input.type === "ready") continue
-    completed++
+    if (input.type === "complete" || input.type === "skip") {
+      completed++
+    }
   }
 
   return { type: "done" }

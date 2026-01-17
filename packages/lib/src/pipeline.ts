@@ -174,11 +174,9 @@ export function pipeline(tasks: Task[]): Pipeline {
 
       let completionResolver: ((error: PipelineError | null) => void) | null =
         null
-      const completionPromise = new Promise<PipelineError | null>(
-        (resolve) => {
-          completionResolver = resolve
-        }
-      )
+      const completionPromise = new Promise<PipelineError | null>((resolve) => {
+        completionResolver = resolve
+      })
 
       // Initialize teardown manager with stats tracking
       const teardownManager = createTeardownManager({
@@ -222,7 +220,6 @@ export function pipeline(tasks: Task[]): Pipeline {
           const isFinished = result.done && result.value.type === "done"
 
           if (isFinished) {
-            config?.onPipelineComplete?.()
             completionResolver?.(null)
             return
           }
@@ -274,7 +271,6 @@ export function pipeline(tasks: Task[]): Pipeline {
           // We continue to reject the pipeline with the original error
         }
 
-        config?.onPipelineError?.(error)
         completionResolver?.(error)
       }
 
@@ -298,7 +294,8 @@ export function pipeline(tasks: Task[]): Pipeline {
       // Initialize signal handler
       const signalHandler = createSignalHandler({
         abortSignal: signal,
-        onAborted: () => failPipeline(new PipelineError("Aborted", PipelineError.Aborted)),
+        onAborted: () =>
+          failPipeline(new PipelineError("Aborted", PipelineError.Aborted)),
         onProcessTerminated: (message) =>
           new PipelineError(message, PipelineError.ProcessTerminated),
       })
@@ -337,4 +334,3 @@ export function pipeline(tasks: Task[]): Pipeline {
 
   return pipelineImpl
 }
-

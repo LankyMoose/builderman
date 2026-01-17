@@ -351,18 +351,8 @@ describe("pipeline", () => {
     const mockSpawn = createMockSpawn({ exitCode: 1 })
 
     const pipe = pipeline([task1])
-    let errorCaught = false
-
     const result = await pipe.run({
       spawn: mockSpawn as any,
-      onPipelineError: (error) => {
-        assert.strictEqual(error.code, PipelineError.TaskFailed)
-        assert.strictEqual(
-          error.message,
-          "[task1] Task failed with non-zero exit code: 1"
-        )
-        errorCaught = true
-      },
     })
 
     // Check result
@@ -386,11 +376,9 @@ describe("pipeline", () => {
     assert.ok(taskStats.startedAt)
     assert.ok(taskStats.finishedAt)
     assert.ok(taskStats.durationMs !== undefined)
-
-    assert.ok(errorCaught)
   })
 
-  it("calls onPipelineComplete when all tasks complete", async () => {
+  it("returns success result when all tasks complete", async () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo task1", build: "echo task1" },
@@ -400,13 +388,8 @@ describe("pipeline", () => {
     const mockSpawn = createMockSpawn()
 
     const pipe = pipeline([task1])
-    let pipelineCompleteCalled = false
-
     const result = await pipe.run({
       spawn: mockSpawn as any,
-      onPipelineComplete: () => {
-        pipelineCompleteCalled = true
-      },
     })
 
     // Check result
@@ -424,8 +407,6 @@ describe("pipeline", () => {
     assert.ok(taskStats.startedAt)
     assert.ok(taskStats.finishedAt)
     assert.ok(taskStats.durationMs !== undefined)
-
-    assert.ok(pipelineCompleteCalled)
   })
 
   it("waits for task with isReady before starting dependent task", async () => {
@@ -730,8 +711,6 @@ describe("pipeline", () => {
   it("cancels pipeline when abort signal is triggered", async () => {
     const abortController = new AbortController()
     let taskKilled = false
-    let pipelineErrorCalled = false
-    let pipelineError: PipelineError | undefined
 
     const task1 = task({
       name: "task1",
@@ -796,10 +775,6 @@ describe("pipeline", () => {
           }, 5)
         }
       },
-      onPipelineError: (error) => {
-        pipelineErrorCalled = true
-        pipelineError = error
-      },
     })
 
     // Check result
@@ -815,10 +790,9 @@ describe("pipeline", () => {
     assert.ok(task2Started, "Task2 should have started")
     // Verify that the task was killed
     assert.ok(taskKilled, "Task should be killed when signal is aborted")
-    // Verify that the error callback was called
-    assert.ok(pipelineErrorCalled, "onPipelineError should be called")
+    // Verify the error in the result
     assert.ok(
-      pipelineError!.code === PipelineError.Aborted,
+      result.error.code === PipelineError.Aborted,
       "Error message should indicate pipeline was aborted"
     )
   })
@@ -931,14 +905,9 @@ describe("pipeline", () => {
         ],
       })
 
-      let taskFailed = false
-
       const pipe = pipeline([task1])
       const result = await pipe.run({
         spawn: mockSpawn as any,
-        onPipelineError: (err) => {
-          taskFailed = err.taskName === "task1"
-        },
       })
 
       assert.strictEqual(result.ok, false)
@@ -949,7 +918,7 @@ describe("pipeline", () => {
       assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
-        taskFailed && teardownExecuted,
+        teardownExecuted,
         "Teardown should be executed on task failure after starting"
       )
     })

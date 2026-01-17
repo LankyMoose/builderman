@@ -156,16 +156,6 @@ export interface PipelineRunConfig {
    * @param error The error that occurred during teardown.
    */
   onTaskTeardownError?: (taskName: string, error: Error) => void
-  /**
-   * Callback invoked when the pipeline encounters an error and fails.
-   * @param error The PipelineError that caused the pipeline to fail.
-   */
-  onPipelineError?: (error: PipelineError) => void
-  /**
-   * Callback invoked when the pipeline completes successfully.
-   * This is called after all tasks have completed and all teardowns have finished.
-   */
-  onPipelineComplete?: () => void
 }
 
 /**

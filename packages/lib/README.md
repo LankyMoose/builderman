@@ -41,7 +41,7 @@ const task2 = task({
   dependencies: [task1],
 })
 
-await pipeline([task1, task2]).run({
+const result = await pipeline([task1, task2]).run({
   // default command is "build" if process.NODE_ENV is "production", otherwise "dev".
   command: "deploy",
   onTaskBegin: (taskName) => {
@@ -50,43 +50,54 @@ await pipeline([task1, task2]).run({
   onTaskComplete: (taskName) => {
     console.log(`[${taskName}] Complete!`)
   },
-  onPipelineComplete: () => {
-    console.log("All tasks complete! 🎉")
-  },
-  onPipelineError: (error) => {
-    console.error(`Pipeline error: ${error.message}`)
-  },
 })
+
+// Check result
+if (!result.ok) {
+  console.error("Pipeline failed:", result.error)
+}
+
+// Access detailed statistics
+console.log(`Pipeline ${result.stats.status}`)
+console.log(`Completed: ${result.stats.summary.completed}`)
+console.log(`Failed: ${result.stats.summary.failed}`)
+console.log(`Duration: ${result.stats.durationMs}ms`)
 ```
 
 ## Error Handling
 
-Pipeline errors are provided as `PipelineError` instances with error codes for easier handling:
+The pipeline **never throws** - it always returns a `RunResult` with detailed statistics. Check the `ok` field to determine success or failure:
 
 ```ts
 import { pipeline, PipelineError } from "builderman"
 
-await pipeline([task1, task2]).run({
-  onPipelineError: (error) => {
-    switch (error.code) {
-      case PipelineError.Aborted:
-        console.error("Pipeline was cancelled")
-        break
-      case PipelineError.TaskFailed:
-        console.error(`Task failed: ${error.message}`)
-        break
-      case PipelineError.ProcessTerminated:
-        console.error("Process was terminated")
-        break
-      case PipelineError.InvalidTask:
-        console.error(`Invalid task configuration: ${error.message}`)
-        break
-      case PipelineError.InvalidSignal:
-        console.error("Invalid abort signal")
-        break
-    }
-  },
-})
+const result = await pipeline([task1, task2]).run()
+
+if (!result.ok) {
+  // Pipeline failed - check the error
+  switch (result.error.code) {
+    case PipelineError.Aborted:
+      console.error("Pipeline was cancelled")
+      break
+    case PipelineError.TaskFailed:
+      console.error(`Task failed: ${result.error.message}`)
+      break
+    case PipelineError.ProcessTerminated:
+      console.error("Process was terminated")
+      break
+    case PipelineError.InvalidTask:
+      console.error(`Invalid task configuration: ${result.error.message}`)
+      break
+    case PipelineError.InvalidSignal:
+      console.error("Invalid abort signal")
+      break
+  }
+}
+
+// Stats are always available, even on failure
+console.log(`Pipeline status: ${result.stats.status}`)
+console.log(`Tasks completed: ${result.stats.summary.completed}`)
+console.log(`Tasks failed: ${result.stats.summary.failed}`)
 ```
 
 ## Cancellation
@@ -100,11 +111,6 @@ const abortController = new AbortController()
 
 const runPromise = pipeline([task1, task2]).run({
   signal: abortController.signal,
-  onPipelineError: (error) => {
-    if (error.code === PipelineError.Aborted) {
-      console.error("Pipeline was cancelled")
-    }
-  },
 })
 
 // Cancel the pipeline after 5 seconds
@@ -112,12 +118,12 @@ setTimeout(() => {
   abortController.abort()
 }, 5000)
 
-try {
-  await runPromise
-} catch (error) {
-  if (error instanceof PipelineError && error.code === PipelineError.Aborted) {
-    // Pipeline was cancelled
-  }
+const result = await runPromise
+
+if (!result.ok && result.error.code === PipelineError.Aborted) {
+  console.error("Pipeline was cancelled")
+  // Check how many tasks were still running
+  console.log(`Tasks still running: ${result.stats.summary.running}`)
 }
 ```
 
@@ -146,7 +152,7 @@ const dbTask = task({
 You can monitor teardown execution with callbacks. Note that teardown failures do not cause the pipeline to fail - they are fire-and-forget cleanup operations:
 
 ```ts
-await pipeline([dbTask]).run({
+const result = await pipeline([dbTask]).run({
   onTaskTeardown: (taskName) => {
     console.log(`[${taskName}] Starting teardown...`)
   },
@@ -156,6 +162,15 @@ await pipeline([dbTask]).run({
     // Teardown failures do not affect pipeline success/failure
   },
 })
+
+// Check teardown status in stats
+const taskStats = Object.values(result.stats.tasks)[0]
+if (taskStats.teardown) {
+  console.log(`Teardown status: ${taskStats.teardown.status}`)
+  if (taskStats.teardown.status === "failed") {
+    console.error(`Teardown error: ${taskStats.teardown.error?.message}`)
+  }
+}
 ```
 
 ### Teardown Execution Rules
@@ -197,7 +212,7 @@ const api = task({
 })
 
 // Teardown order: api first, then db
-await pipeline([db, api]).run()
+const result = await pipeline([db, api]).run()
 ```
 
 ## Skipping Tasks
@@ -235,12 +250,15 @@ const apiTask = task({
   dependencies: [dbTask], // dbTask will be skipped, but apiTask will still run
 })
 
-await pipeline([dbTask, apiTask]).run({
+const result = await pipeline([dbTask, apiTask]).run({
   command: "build",
   onTaskSkipped: (taskName, mode) => {
     console.log(`[${taskName}] skipped (no command for mode "${mode}")`)
   },
 })
+
+// Check skipped tasks in stats
+console.log(`Skipped: ${result.stats.summary.skipped}`)
 ```
 
 ### Strict Mode
@@ -248,10 +266,14 @@ await pipeline([dbTask, apiTask]).run({
 In strict mode, missing commands cause the pipeline to fail. Use this for CI/release pipelines where every task is expected to participate:
 
 ```ts
-await pipeline([dbTask, apiTask]).run({
+const result = await pipeline([dbTask, apiTask]).run({
   command: "build",
   strict: true, // Missing commands will cause pipeline to fail
 })
+
+if (!result.ok) {
+  console.error("Pipeline failed in strict mode:", result.error.message)
+}
 ```
 
 ### Task-Level Override
@@ -269,11 +291,14 @@ const dbTask = task({
   allowSkip: true, // Explicitly allow skipping even in strict mode
 })
 
-await pipeline([dbTask]).run({
+const result = await pipeline([dbTask]).run({
   command: "build",
   strict: true, // Global strict mode
   // dbTask will still be skipped because allowSkip: true
 })
+
+// Task was skipped despite strict mode
+console.log(`Skipped: ${result.stats.summary.skipped}`)
 ```
 
 ### Nested Pipeline Behavior
@@ -293,7 +318,11 @@ const innerPipeline = pipeline([
 const outerTask = innerPipeline.toTask({ name: "outer" })
 
 // If all inner tasks are skipped in build mode, outer task is also skipped
-await pipeline([outerTask]).run({ command: "build" })
+const result = await pipeline([outerTask]).run({ command: "build" })
+
+if (result.stats.summary.skipped > 0) {
+  console.log("Outer task was skipped because all inner tasks were skipped")
+}
 ```
 
 ## Pipeline Composition
@@ -329,7 +358,10 @@ const build = task({
   cwd: "packages/lib",
 })
 
-await build.run()
+const result = await build.run()
+if (!result.ok) {
+  console.error("Build failed:", result.error)
+}
 ```
 
 ### Composing Pipelines as Tasks
@@ -355,7 +387,97 @@ const deployTask = deploy.toTask({ name: "deploy", dependencies: [testTask] })
 // Compose into final pipeline
 const ci = pipeline([buildTask, testTask, deployTask])
 
-await ci.run()
+const result = await ci.run()
+if (!result.ok) {
+  console.error("CI pipeline failed:", result.error)
+  // Check which stage failed
+  for (const taskStats of Object.values(result.stats.tasks)) {
+    if (taskStats.status === "failed") {
+      console.error(`  ${taskStats.name} failed: ${taskStats.error?.message}`)
+    }
+  }
+}
 ```
 
 **Note:** When a pipeline is converted to a task, it becomes a single unit in the dependency graph. The nested pipeline will execute completely before any dependent tasks can start.
+
+## Execution Statistics
+
+The pipeline returns detailed statistics about the execution. The `RunResult` contains:
+
+- `ok`: `true` if the pipeline succeeded, `false` if it failed or was aborted
+- `error`: `null` if successful, otherwise a `PipelineError` instance
+- `stats`: Detailed statistics about the pipeline execution
+
+### Pipeline Statistics
+
+```ts
+const result = await pipeline([task1, task2]).run()
+
+console.log(result.stats.status) // "success" | "failed" | "aborted"
+console.log(result.stats.command) // "dev" | "build" | etc.
+console.log(result.stats.durationMs) // Total execution time
+console.log(result.stats.summary.total) // Total number of tasks
+console.log(result.stats.summary.completed) // Number of completed tasks
+console.log(result.stats.summary.failed) // Number of failed tasks
+console.log(result.stats.summary.skipped) // Number of skipped tasks
+console.log(result.stats.summary.running) // Number of tasks still running (useful when aborted)
+```
+
+### Task Statistics
+
+Each task has detailed statistics available in `result.stats.tasks`:
+
+```ts
+const result = await pipeline([task1, task2]).run()
+
+for (const [taskId, taskStats] of Object.entries(result.stats.tasks)) {
+  console.log(`Task: ${taskStats.name}`)
+  console.log(`Status: ${taskStats.status}`) // "pending" | "skipped" | "running" | "completed" | "failed" | "aborted"
+  console.log(`Command: ${taskStats.command}`)
+  console.log(`Duration: ${taskStats.durationMs}ms`)
+  
+  if (taskStats.status === "failed") {
+    console.error(`Error: ${taskStats.error?.message}`)
+    console.error(`Exit code: ${taskStats.exitCode}`)
+    if (taskStats.signal) {
+      console.error(`Terminated by: ${taskStats.signal}`)
+    }
+  }
+  
+  if (taskStats.teardown) {
+    console.log(`Teardown status: ${taskStats.teardown.status}`)
+    if (taskStats.teardown.status === "failed") {
+      console.error(`Teardown error: ${taskStats.teardown.error?.message}`)
+    }
+  }
+}
+```
+
+### Example: Checking Task Results
+
+```ts
+const result = await pipeline([buildTask, testTask, deployTask]).run()
+
+if (!result.ok) {
+  // Find which tasks failed
+  const failedTasks = Object.values(result.stats.tasks).filter(
+    (t) => t.status === "failed"
+  )
+  
+  for (const task of failedTasks) {
+    console.error(`${task.name} failed:`)
+    console.error(`  Error: ${task.error?.message}`)
+    console.error(`  Exit code: ${task.exitCode}`)
+    console.error(`  Duration: ${task.durationMs}ms`)
+  }
+  
+  // Check if any tasks were still running when pipeline was aborted
+  if (result.stats.summary.running > 0) {
+    console.warn(`${result.stats.summary.running} tasks were still running`)
+  }
+} else {
+  console.log("✅ All tasks completed successfully!")
+  console.log(`Total duration: ${result.stats.durationMs}ms`)
+}
+```
