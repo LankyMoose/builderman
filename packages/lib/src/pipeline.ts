@@ -26,6 +26,8 @@ const pipelineTasksCache = new WeakMap<Pipeline, Task[]>()
  * await pipeline([task1, task2]).run()
  */
 export function pipeline(tasks: Task[]): Pipeline {
+  validateTasks(tasks)
+
   const graph = createTaskGraph(tasks)
   graph.validate()
   graph.simplify()
@@ -340,7 +342,7 @@ export function pipeline(tasks: Task[]): Pipeline {
                 // - If some run, some skip → outer task is completed
                 // - If any fail → outer task fails (handled in onPipelineError)
                 const commandName =
-                  config?.command ?? process.env.NODE_ENV === "production"
+                  (config?.command ?? process.env.NODE_ENV === "production")
                     ? "build"
                     : "dev"
 
@@ -374,7 +376,7 @@ export function pipeline(tasks: Task[]): Pipeline {
 
         // Regular task execution
         const commandName =
-          config?.command ?? process.env.NODE_ENV === "production"
+          (config?.command ?? process.env.NODE_ENV === "production")
             ? "build"
             : "dev"
         const commandConfig = task[$TASK_INTERNAL].commands[commandName]
@@ -415,7 +417,7 @@ export function pipeline(tasks: Task[]): Pipeline {
         const readyTimeout =
           typeof commandConfig === "string"
             ? Infinity
-            : commandConfig.readyTimeout ?? Infinity
+            : (commandConfig.readyTimeout ?? Infinity)
         const teardown =
           typeof commandConfig === "string" ? undefined : commandConfig.teardown
 
