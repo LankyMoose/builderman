@@ -351,7 +351,7 @@ describe("pipeline", () => {
           assert.strictEqual(error.code, PipelineError.TaskFailed)
           assert.strictEqual(
             error.message,
-            "[task1] Task failed with exit code 1"
+            "[task1] Task failed with non-zero exit code: 1"
           )
           errorCaught = true
         },

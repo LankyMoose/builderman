@@ -365,7 +365,7 @@ function executeRegularTask(
     if (code !== 0) {
       failPipeline(
         new PipelineError(
-          `[${taskName}] Task failed with exit code ${code ?? 1}`,
+          `[${taskName}] Task failed with non-zero exit code: ${code}`,
           PipelineError.TaskFailed,
           taskName
         )
