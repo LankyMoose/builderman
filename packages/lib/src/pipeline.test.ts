@@ -1649,68 +1649,6 @@ describe("pipeline <-> task conversion", () => {
       })
     }, /Invalid dependency/)
   })
-
-  it("converts tasks to pipelines by chaining tasks with andThen", async () => {
-    const executionOrder: string[] = []
-
-    // Mock spawn to track execution
-    const mockSpawn = createMockSpawn()
-
-    // Use andThen to chain tasks
-    const build = task({
-      name: "compile",
-      commands: { dev: "echo compile", build: "echo compile" },
-      cwd: ".",
-    }).andThen({
-      name: "bundle",
-      commands: { dev: "echo bundle", build: "echo bundle" },
-      cwd: ".",
-    })
-
-    // Verify it returns a pipeline
-    assert.ok("run" in build, "andThen should return a pipeline")
-    assert.ok("toTask" in build, "andThen should return a pipeline")
-
-    // Run the pipeline
-    await build.run({
-      spawn: mockSpawn as any,
-      onTaskBegin: (name) => {
-        executionOrder.push(`start:${name}`)
-      },
-      onTaskComplete: (name) => {
-        executionOrder.push(`complete:${name}`)
-      },
-    })
-
-    // Verify execution order: compile should complete before bundle starts
-    // Note: Due to async timing with setImmediate, we verify that compile starts first
-    // and that bundle doesn't start until after compile's completion is processed
-    const compileStartIndex = executionOrder.indexOf("start:compile")
-    const compileCompleteIndex = executionOrder.indexOf("complete:compile")
-    const bundleStartIndex = executionOrder.indexOf("start:bundle")
-    const bundleCompleteIndex = executionOrder.indexOf("complete:bundle")
-
-    assert.ok(compileStartIndex !== -1, "compile should start")
-    assert.ok(compileCompleteIndex !== -1, "compile should complete")
-    assert.ok(bundleStartIndex !== -1, "bundle should start")
-    assert.ok(bundleCompleteIndex !== -1, "bundle should complete")
-
-    // Compile should start before bundle
-    assert.ok(
-      compileStartIndex < bundleStartIndex,
-      `compile should start before bundle. Compile started at ${compileStartIndex}, bundle started at ${bundleStartIndex}. Order: ${executionOrder.join(
-        ", "
-      )}`
-    )
-
-    // Bundle should complete after compile completes
-    assert.ok(
-      bundleCompleteIndex > compileCompleteIndex,
-      `bundle should complete after compile. Compile completed at ${compileCompleteIndex}, bundle completed at ${bundleCompleteIndex}. Order: ${executionOrder.join(
-        ", "
-      )}`
-    )
-  })
 })
 
 describe("stats field validation", () => {

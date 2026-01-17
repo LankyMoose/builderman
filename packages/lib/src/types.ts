@@ -95,13 +95,6 @@ export interface Task {
    * @internal
    */
   [$TASK_INTERNAL]: TaskInternal
-  /**
-   * Creates a new pipeline that starts after this task completes.
-   * This allows for chaining tasks together.
-   * @param config Task configuration for the next task in the chain.
-   * @returns A new pipeline starting with the configured task.
-   */
-  andThen(config: Omit<TaskConfig, "dependencies">): Pipeline
 }
 
 /**

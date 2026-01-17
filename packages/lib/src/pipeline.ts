@@ -18,10 +18,6 @@ import type {
   TaskStats,
 } from "./types.js"
 
-// Module-level cache for pipeline-to-task conversions
-// Key: Pipeline, Value: Map of name -> Task
-const pipelineTaskCache = new WeakMap<Pipeline, Map<string, Task>>()
-
 // Store tasks for each pipeline (for nested pipeline skip tracking)
 const pipelineTasksCache = new WeakMap<Pipeline, Task[]>()
 
@@ -112,16 +108,8 @@ export function pipeline(tasks: Task[]): Pipeline {
         dependencies: [...(config.dependencies || [])],
       })
 
-      // Mark this task as a pipeline task
+      // Mark this task as a pipeline task so it can be detected by the executor
       syntheticTask[$TASK_INTERNAL].pipeline = pipelineImpl
-
-      // Cache this conversion
-      let cache = pipelineTaskCache.get(pipelineImpl)
-      if (!cache) {
-        cache = new Map()
-        pipelineTaskCache.set(pipelineImpl, cache)
-      }
-      cache.set(config.name, syntheticTask)
 
       return syntheticTask
     },

@@ -327,46 +327,7 @@ if (result.stats.summary.skipped > 0) {
 
 ## Pipeline Composition
 
-Build complex workflows by composing tasks and pipelines together.
-
-### Task Chaining
-
-Chain tasks together using `andThen()` to create a pipeline that will run the tasks in order, automatically adding the previous task as a dependency:
-
-```ts
-import { task } from "builderman"
-
-const build = task({
-  name: "compile",
-  commands: {
-    build: "tsc",
-    dev: {
-      run: "tsc --watch",
-      readyWhen: (output) => output.includes("Watching for file changes."),
-    },
-  },
-  cwd: "packages/lib",
-}).andThen({
-  name: "bundle",
-  commands: {
-    build: "rollup",
-    dev: {
-      run: "rollup --watch",
-      readyWhen: (output) => output.includes("Watching for file changes."),
-    },
-  },
-  cwd: "packages/lib",
-})
-
-const result = await build.run()
-if (!result.ok) {
-  console.error("Build failed:", result.error)
-}
-```
-
-### Composing Pipelines as Tasks
-
-Convert pipelines to tasks and compose them with explicit dependencies:
+Build complex workflows by converting pipelines to tasks.
 
 ```ts
 const build = pipeline([
