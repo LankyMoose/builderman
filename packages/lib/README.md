@@ -1,80 +1,215 @@
-# **builderman**
+# builderman
 
-#### _A simple task runner for building and developing projects._
+#### A dependency-aware task runner for building, developing, and orchestrating complex workflows.
 
-<br />
+**builderman** lets you define tasks with explicit dependencies, lifecycle hooks, and multiple execution modes (`dev`, `build`, `deploy`, etc.), then compose them into pipelines that run **deterministically**, **observably**, and **safely**.
+
+It is designed for monorepos, long-running development processes, and CI/CD pipelines where **cleanup, cancellation, and failure handling matter**.
+
+---
+
+## Table of Contents
+
+- [Key Features](#key-features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Core Concepts](#core-concepts)
+  - [Tasks](#tasks)
+  - [Commands & Modes](#commands--modes)
+  - [Dependencies](#dependencies)
+  - [Pipelines](#pipelines)
+  - [Pipeline Composition](#pipeline-composition)
+- [Error Handling Guarantees](#error-handling-guarantees)
+- [Cancellation](#cancellation)
+- [Teardown](#teardown)
+  - [Basic Teardown](#basic-teardown)
+  - [Teardown Callbacks](#teardown-callbacks)
+  - [Teardown Execution Rules](#teardown-execution-rules)
+- [Skipping Tasks](#skipping-tasks)
+  - [Strict Mode](#strict-mode)
+  - [Task-Level Skip Override](#task-level-skip-override)
+- [Execution Statistics](#execution-statistics)
+  - [Pipeline Statistics](#pipeline-statistics)
+  - [Task Statistics](#task-statistics)
+- [When Should I Use builderman?](#when-should-i-use-builderman)
+
+## Key Features
+
+- 🧩 **Explicit dependency graph** — tasks run only when their dependencies are satisfied
+- 🔁 **Multi-mode commands** — `dev`, `build`, `deploy`, or any custom mode
+- ⏳ **Readiness detection** — wait for long-running processes to become “ready”
+- 🧹 **Guaranteed teardown** — automatic cleanup in reverse dependency order
+- 🛑 **Cancellation support** — abort pipelines using `AbortSignal`
+- 📊 **Rich execution statistics** — always available, even on failure
+- ❌ **Never throws** — failures are returned as structured results
+- 🧱 **Composable pipelines** — pipelines can be converted into tasks
+
+---
 
 ## Installation
 
-```bash
+```sh
 npm install builderman
 ```
 
-## Usage
+---
+
+## Quick Start
 
 ```ts
 import { task, pipeline } from "builderman"
 
-const task1 = task({
+const build = task({
+  name: "build",
+  commands: { build: "tsc" },
+  cwd: ".",
+})
+
+const test = task({
+  name: "test",
+  commands: { build: "npm test" },
+  cwd: ".",
+  dependencies: [build],
+})
+
+const result = await pipeline([build, test]).run()
+
+if (!result.ok) {
+  console.error("Pipeline failed:", result.error.message)
+}
+```
+
+This defines a simple dependency graph where `test` runs only after `build` completes successfully.
+
+---
+
+## Core Concepts
+
+### Tasks
+
+A **task** represents a unit of work. Each task:
+
+- Has a unique name
+- Defines commands for one or more modes
+- May depend on other tasks
+- May register teardown logic
+
+```ts
+import { task } from "builderman"
+
+const libTask = task({
   name: "lib:build",
   commands: {
     build: "tsc",
     dev: {
       run: "tsc --watch",
-      readyWhen: (stdout) => {
-        // mark this task as ready when the process is watching for file changes
-        return stdout.includes("Watching for file changes.")
-      },
+      readyWhen: (stdout) => stdout.includes("Watching for file changes."),
     },
   },
   cwd: "packages/lib",
 })
+```
 
-const task2 = task({
+---
+
+### Commands & Modes
+
+Each task can define commands for different **modes** (for example `dev`, `build`, `deploy`).
+
+When running a pipeline:
+
+- If `command` is provided, that mode is used
+- Otherwise:
+  - `"build"` is used when `NODE_ENV === "production"`
+  - `"dev"` is used in all other cases
+
+Commands may be:
+
+- A string (executed directly), or
+- An object with:
+  - `run`: the command to execute
+  - `readyWhen`: a predicate that marks the task as ready
+  - `teardown`: cleanup logic to run after completion
+
+---
+
+### Dependencies
+
+Tasks may depend on other tasks. A task will not start until all its dependencies have completed (or been skipped).
+
+```ts
+const consumerTask = task({
   name: "consumer:dev",
   commands: {
     build: "npm run build",
     dev: "npm run dev",
-    deploy: "npm run deploy",
   },
   cwd: "packages/consumer",
-  dependencies: [task1],
+  dependencies: [libTask],
 })
-
-const result = await pipeline([task1, task2]).run({
-  // default command is "build" if process.NODE_ENV is "production", otherwise "dev".
-  command: "deploy",
-  onTaskBegin: (taskName) => {
-    console.log(`[${taskName}] Starting...`)
-  },
-  onTaskComplete: (taskName) => {
-    console.log(`[${taskName}] Complete!`)
-  },
-})
-
-// Check result
-if (!result.ok) {
-  console.error("Pipeline failed:", result.error)
-}
-
-// Access detailed statistics
-console.log(`Pipeline ${result.stats.status}`)
-console.log(`Completed: ${result.stats.summary.completed}`)
-console.log(`Failed: ${result.stats.summary.failed}`)
-console.log(`Duration: ${result.stats.durationMs}ms`)
 ```
 
-## Error Handling
+---
 
-The pipeline **never throws** - it always returns a `RunResult` with detailed statistics. Check the `ok` field to determine success or failure:
+### Pipelines
+
+A **pipeline** executes a set of tasks according to their dependency graph.
+
+```ts
+import { pipeline } from "builderman"
+
+const result = await pipeline([libTask, consumerTask]).run({
+  command: "dev",
+  onTaskBegin: (name) => {
+    console.log(`[${name}] starting`)
+  },
+  onTaskComplete: (name) => {
+    console.log(`[${name}] complete`)
+  },
+})
+```
+
+---
+
+### Pipeline Composition
+
+Pipelines can be converted into tasks and composed like any other unit of work.
+
+```ts
+const build = pipeline([
+  /* ... */
+])
+const test = pipeline([
+  /* ... */
+])
+const deploy = pipeline([
+  /* ... */
+])
+
+const buildTask = build.toTask({ name: "build" })
+const testTask = test.toTask({ name: "test", dependencies: [buildTask] })
+const deployTask = deploy.toTask({ name: "deploy", dependencies: [testTask] })
+
+const ci = pipeline([buildTask, testTask, deployTask])
+const result = await ci.run()
+```
+
+When a pipeline is converted to a task, it becomes a **single node** in the dependency graph. The nested pipeline must fully complete before dependents can start.
+
+---
+
+## Error Handling Guarantees
+
+**builderman pipelines never throw.**
+
+All failures — including task errors, invalid configuration, cancellation, and process termination — are reported through a structured `RunResult`.
 
 ```ts
 import { pipeline, PipelineError } from "builderman"
 
-const result = await pipeline([task1, task2]).run()
+const result = await pipeline([libTask, consumerTask]).run()
 
 if (!result.ok) {
-  // Pipeline failed - check the error
   switch (result.error.code) {
     case PipelineError.Aborted:
       console.error("Pipeline was cancelled")
@@ -93,43 +228,43 @@ if (!result.ok) {
       break
   }
 }
-
-// Stats are always available, even on failure
-console.log(`Pipeline status: ${result.stats.status}`)
-console.log(`Tasks completed: ${result.stats.summary.completed}`)
-console.log(`Tasks failed: ${result.stats.summary.failed}`)
 ```
+
+Execution statistics are **always available**, even on failure.
+
+---
 
 ## Cancellation
 
-You can cancel a running pipeline by providing an `AbortSignal`:
+You can cancel a running pipeline using an `AbortSignal`.
 
 ```ts
-import { pipeline, PipelineError } from "builderman"
+const controller = new AbortController()
 
-const abortController = new AbortController()
-
-const runPromise = pipeline([task1, task2]).run({
-  signal: abortController.signal,
+const runPromise = pipeline([libTask, consumerTask]).run({
+  signal: controller.signal,
 })
 
-// Cancel the pipeline after 5 seconds
+// Cancel after 5 seconds
 setTimeout(() => {
-  abortController.abort()
+  controller.abort()
 }, 5000)
 
 const result = await runPromise
 
 if (!result.ok && result.error.code === PipelineError.Aborted) {
   console.error("Pipeline was cancelled")
-  // Check how many tasks were still running
   console.log(`Tasks still running: ${result.stats.summary.running}`)
 }
 ```
 
+---
+
 ## Teardown
 
-Tasks can specify teardown commands that run automatically when the task completes or fails. Teardowns are executed in reverse dependency order (dependents before dependencies) to ensure proper cleanup.
+Tasks may specify teardown commands that run automatically when a task completes or fails.
+
+Teardowns are executed **in reverse dependency order** (dependents before dependencies) to ensure safe cleanup.
 
 ### Basic Teardown
 
@@ -147,95 +282,59 @@ const dbTask = task({
 })
 ```
 
+---
+
 ### Teardown Callbacks
 
-You can monitor teardown execution with callbacks. Note that teardown failures do not cause the pipeline to fail - they are fire-and-forget cleanup operations:
+You can observe teardown execution using callbacks. Teardown failures do **not** cause the pipeline to fail — they are best-effort cleanup operations.
 
 ```ts
 const result = await pipeline([dbTask]).run({
   onTaskTeardown: (taskName) => {
-    console.log(`[${taskName}] Starting teardown...`)
+    console.log(`[${taskName}] starting teardown`)
   },
   onTaskTeardownError: (taskName, error) => {
-    console.error(`[${taskName}] Teardown failed: ${error.message}`)
-    // error is a regular Error instance (not a PipelineError)
-    // Teardown failures do not affect pipeline success/failure
+    console.error(`[${taskName}] teardown failed: ${error.message}`)
   },
 })
-
-// Check teardown status in stats
-const taskStats = Object.values(result.stats.tasks)[0]
-if (taskStats.teardown) {
-  console.log(`Teardown status: ${taskStats.teardown.status}`)
-  if (taskStats.teardown.status === "failed") {
-    console.error(`Teardown error: ${taskStats.teardown.error?.message}`)
-  }
-}
 ```
+
+Teardown results are recorded in task statistics.
+
+---
 
 ### Teardown Execution Rules
 
 Teardowns run when:
 
-- ✅ The command entered the running state (regardless of success or failure)
-- ✅ The pipeline completes successfully
-- ✅ The pipeline fails after tasks have started
+- The command entered the running state
+- The pipeline completes successfully
+- The pipeline fails after tasks have started
 
 Teardowns do **not** run when:
 
-- ❌ The task was skipped (no command for the current mode)
-- ❌ The task failed before starting (spawn error)
-- ❌ The pipeline never began execution
+- The task was skipped
+- The task failed before starting (spawn error)
+- The pipeline never began execution
 
-### Reverse Dependency Order
-
-Teardowns execute in reverse dependency order to ensure dependents are cleaned up before their dependencies:
-
-```ts
-const db = task({
-  name: "db",
-  commands: {
-    dev: { run: "docker-compose up", teardown: "docker-compose down" },
-    build: "echo build",
-  },
-  cwd: ".",
-})
-
-const api = task({
-  name: "api",
-  commands: {
-    dev: { run: "npm run dev", teardown: "echo stopping api" },
-    build: "echo build",
-  },
-  cwd: ".",
-  dependencies: [db], // api depends on db
-})
-
-// Teardown order: api first, then db
-const result = await pipeline([db, api]).run()
-```
+---
 
 ## Skipping Tasks
 
-Tasks can be automatically skipped when they don't have a command for the current mode. This is useful for multi-mode pipelines where some tasks are only relevant in certain contexts.
+If a task does not define a command for the current mode, it is **skipped** by default.
 
-### Default Behavior
+Skipped tasks:
 
-If a task has no command for the current mode, it is **skipped**:
-
-- ✅ The task participates in the dependency graph
-- ✅ The task resolves immediately (satisfies dependencies)
-- ✅ Dependents are unblocked
-- ❌ No command is executed
-- ❌ No teardown is registered
-- ❌ No readiness is waited for
+- Participate in the dependency graph
+- Resolve immediately
+- Unblock dependent tasks
+- Do not execute commands or teardowns
 
 ```ts
 const dbTask = task({
   name: "database",
   commands: {
     dev: "docker-compose up",
-    // No build command - will be skipped in build mode
   },
   cwd: ".",
 })
@@ -247,28 +346,27 @@ const apiTask = task({
     build: "npm run build",
   },
   cwd: ".",
-  dependencies: [dbTask], // dbTask will be skipped, but apiTask will still run
+  dependencies: [dbTask],
 })
 
 const result = await pipeline([dbTask, apiTask]).run({
   command: "build",
   onTaskSkipped: (taskName, mode) => {
-    console.log(`[${taskName}] skipped (no command for mode "${mode}")`)
+    console.log(`[${taskName}] skipped (no "${mode}" command)`)
   },
 })
-
-// Check skipped tasks in stats
-console.log(`Skipped: ${result.stats.summary.skipped}`)
 ```
+
+---
 
 ### Strict Mode
 
-In strict mode, missing commands cause the pipeline to fail. Use this for CI/release pipelines where every task is expected to participate:
+In **strict mode**, missing commands cause the pipeline to fail. This is useful for CI and release pipelines.
 
 ```ts
 const result = await pipeline([dbTask, apiTask]).run({
   command: "build",
-  strict: true, // Missing commands will cause pipeline to fail
+  strict: true,
 })
 
 if (!result.ok) {
@@ -276,169 +374,81 @@ if (!result.ok) {
 }
 ```
 
-### Task-Level Override
+---
 
-Even with global strict mode, you can explicitly allow a task to be skipped:
+### Task-Level Skip Override
+
+Tasks may explicitly allow skipping, even when strict mode is enabled.
 
 ```ts
 const dbTask = task({
   name: "database",
   commands: {
     dev: "docker-compose up",
-    // No build command, but explicitly allowed to skip
   },
   cwd: ".",
-  allowSkip: true, // Explicitly allow skipping even in strict mode
+  allowSkip: true,
 })
 
 const result = await pipeline([dbTask]).run({
   command: "build",
-  strict: true, // Global strict mode
-  // dbTask will still be skipped because allowSkip: true
+  strict: true,
 })
-
-// Task was skipped despite strict mode
-console.log(`Skipped: ${result.stats.summary.skipped}`)
 ```
 
-### Nested Pipeline Behavior
-
-When a pipeline is converted to a task, skip behavior is preserved:
-
-- If **all** inner tasks are skipped → outer task is skipped
-- If **some** run, some skip → outer task is completed
-- If **any** fail → outer task fails
-
-```ts
-const innerPipeline = pipeline([
-  task({ name: "inner1", commands: { dev: "..." }, cwd: "." }),
-  task({ name: "inner2", commands: { dev: "..." }, cwd: "." }),
-])
-
-const outerTask = innerPipeline.toTask({ name: "outer" })
-
-// If all inner tasks are skipped in build mode, outer task is also skipped
-const result = await pipeline([outerTask]).run({ command: "build" })
-
-if (result.stats.summary.skipped > 0) {
-  console.log("Outer task was skipped because all inner tasks were skipped")
-}
-```
-
-## Pipeline Composition
-
-Build complex workflows by converting pipelines to tasks.
-
-```ts
-const build = pipeline([
-  /* ... */
-])
-const test = pipeline([
-  /* ... */
-])
-const deploy = pipeline([
-  /* ... */
-])
-
-// Convert to tasks first
-const buildTask = build.toTask({ name: "build" })
-const testTask = test.toTask({ name: "test", dependencies: [buildTask] })
-const deployTask = deploy.toTask({ name: "deploy", dependencies: [testTask] })
-
-// Compose into final pipeline
-const ci = pipeline([buildTask, testTask, deployTask])
-
-const result = await ci.run()
-if (!result.ok) {
-  console.error("CI pipeline failed:", result.error)
-  // Check which stage failed
-  for (const taskStats of Object.values(result.stats.tasks)) {
-    if (taskStats.status === "failed") {
-      console.error(`  ${taskStats.name} failed: ${taskStats.error?.message}`)
-    }
-  }
-}
-```
-
-**Note:** When a pipeline is converted to a task, it becomes a single unit in the dependency graph. The nested pipeline will execute completely before any dependent tasks can start.
+---
 
 ## Execution Statistics
 
-The pipeline returns detailed statistics about the execution. The `RunResult` contains:
-
-- `ok`: `true` if the pipeline succeeded, `false` if it failed or was aborted
-- `error`: `null` if successful, otherwise a `PipelineError` instance
-- `stats`: Detailed statistics about the pipeline execution
+Every pipeline run returns detailed execution statistics.
 
 ### Pipeline Statistics
 
 ```ts
-const result = await pipeline([task1, task2]).run()
-
 console.log(result.stats.status) // "success" | "failed" | "aborted"
-console.log(result.stats.command) // "dev" | "build" | etc.
+console.log(result.stats.command) // Executed mode
 console.log(result.stats.durationMs) // Total execution time
-console.log(result.stats.summary.total) // Total number of tasks
-console.log(result.stats.summary.completed) // Number of completed tasks
-console.log(result.stats.summary.failed) // Number of failed tasks
-console.log(result.stats.summary.skipped) // Number of skipped tasks
-console.log(result.stats.summary.running) // Number of tasks still running (useful when aborted)
+console.log(result.stats.summary.total)
+console.log(result.stats.summary.completed)
+console.log(result.stats.summary.failed)
+console.log(result.stats.summary.skipped)
+console.log(result.stats.summary.running)
 ```
+
+---
 
 ### Task Statistics
 
-Each task has detailed statistics available in `result.stats.tasks`:
+Each task provides detailed per-task data:
 
 ```ts
-const result = await pipeline([task1, task2]).run()
+for (const task of Object.values(result.stats.tasks)) {
+  console.log(task.name, task.status)
+  console.log(task.durationMs)
 
-for (const [taskId, taskStats] of Object.entries(result.stats.tasks)) {
-  console.log(`Task: ${taskStats.name}`)
-  console.log(`Status: ${taskStats.status}`) // "pending" | "skipped" | "running" | "completed" | "failed" | "aborted"
-  console.log(`Command: ${taskStats.command}`)
-  console.log(`Duration: ${taskStats.durationMs}ms`)
-  
-  if (taskStats.status === "failed") {
-    console.error(`Error: ${taskStats.error?.message}`)
-    console.error(`Exit code: ${taskStats.exitCode}`)
-    if (taskStats.signal) {
-      console.error(`Terminated by: ${taskStats.signal}`)
-    }
+  if (task.status === "failed") {
+    console.error(task.error?.message)
+    console.error(task.exitCode)
   }
-  
-  if (taskStats.teardown) {
-    console.log(`Teardown status: ${taskStats.teardown.status}`)
-    if (taskStats.teardown.status === "failed") {
-      console.error(`Teardown error: ${taskStats.teardown.error?.message}`)
-    }
+
+  if (task.teardown) {
+    console.log("Teardown:", task.teardown.status)
   }
 }
 ```
 
-### Example: Checking Task Results
+---
 
-```ts
-const result = await pipeline([buildTask, testTask, deployTask]).run()
+## When Should I Use builderman?
 
-if (!result.ok) {
-  // Find which tasks failed
-  const failedTasks = Object.values(result.stats.tasks).filter(
-    (t) => t.status === "failed"
-  )
-  
-  for (const task of failedTasks) {
-    console.error(`${task.name} failed:`)
-    console.error(`  Error: ${task.error?.message}`)
-    console.error(`  Exit code: ${task.exitCode}`)
-    console.error(`  Duration: ${task.durationMs}ms`)
-  }
-  
-  // Check if any tasks were still running when pipeline was aborted
-  if (result.stats.summary.running > 0) {
-    console.warn(`${result.stats.summary.running} tasks were still running`)
-  }
-} else {
-  console.log("✅ All tasks completed successfully!")
-  console.log(`Total duration: ${result.stats.durationMs}ms`)
-}
-```
+**builderman** is a good fit when:
+
+- You have dependent tasks that must run in a strict order
+- You run long-lived dev processes that need readiness detection
+- Cleanup matters (databases, containers, servers)
+- You want structured results instead of log-scraping
+
+It may be overkill if:
+
+- You only need a few linear npm scripts
+- You do not need dependency graphs or teardown guarantees
