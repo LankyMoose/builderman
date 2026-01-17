@@ -105,8 +105,6 @@ export function pipeline(tasks: Task[]): Pipeline {
 
   const pipelineImpl: Pipeline = {
     toTask(config: PipelineTaskConfig): Task {
-      validateTasks(config.dependencies)
-
       const syntheticTask = task({
         name: config.name,
         commands: {},
