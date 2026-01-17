@@ -11,4 +11,8 @@ export type {
   Commands,
   PipelineRunConfig,
   PipelineTaskConfig,
+  RunResult,
+  PipelineStats,
+  TaskStats,
+  TaskStatus,
 } from "./types.js"

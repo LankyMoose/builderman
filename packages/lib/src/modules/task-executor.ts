@@ -11,6 +11,7 @@ import type {
   Pipeline,
   PipelineRunConfig,
   TaskGraph,
+  TaskStats,
 } from "../types.js"
 import type { SchedulerInput } from "../scheduler.js"
 import type { TeardownManager } from "./teardown-manager.js"
@@ -26,6 +27,8 @@ export interface TaskExecutorConfig {
   pipelineTasksCache: WeakMap<Pipeline, Task[]>
   failPipeline: (error: PipelineError) => Promise<void>
   advanceScheduler: (input?: SchedulerInput) => void
+  updateTaskStatus: (taskId: string, updates: Partial<TaskStats>) => void
+  taskStats: Map<string, TaskStats>
 }
 
 /**
@@ -77,6 +80,7 @@ function executeNestedPipeline(
     pipelineTasksCache,
     failPipeline,
     advanceScheduler,
+    updateTaskStatus,
   } = executorConfig
 
   // Track nested pipeline state for skip behavior
@@ -89,7 +93,18 @@ function executeNestedPipeline(
     ? createTaskGraph(nestedTasks).nodes.size
     : 0
 
+  const commandName =
+    (config?.command ?? process.env.NODE_ENV === "production")
+      ? "build"
+      : "dev"
+
   // Mark as ready immediately (pipeline entry nodes will handle their own ready state)
+  const startedAt = Date.now()
+  updateTaskStatus(taskId, {
+    status: "running",
+    command: commandName,
+    startedAt,
+  })
   advanceScheduler({ type: "ready", taskId })
   config?.onTaskBegin?.(taskName)
 
@@ -128,6 +143,13 @@ function executeNestedPipeline(
         if (pipelineStopped) return
         runningPipelines.delete(taskId)
         // error is already a PipelineError
+        const finishedAt = Date.now()
+        updateTaskStatus(taskId, {
+          status: "failed",
+          finishedAt,
+          durationMs: finishedAt - startedAt,
+          error,
+        })
         failPipeline(error)
       },
       onPipelineComplete: () => {
@@ -148,23 +170,54 @@ function executeNestedPipeline(
           nestedTotalTasks > 0
         ) {
           // All tasks were skipped
-          console.log(
-            `[${taskName}] skipped (all nested tasks skipped)`
-          )
+          const finishedAt = Date.now()
+          updateTaskStatus(taskId, {
+            status: "skipped",
+            finishedAt,
+            durationMs: finishedAt - startedAt,
+          })
           config?.onTaskSkipped?.(taskName, commandName)
           setImmediate(() => {
             advanceScheduler({ type: "skip", taskId })
           })
         } else {
           // Some tasks ran (and completed successfully)
+          const finishedAt = Date.now()
+          updateTaskStatus(taskId, {
+            status: "completed",
+            finishedAt,
+            durationMs: finishedAt - startedAt,
+          })
           config?.onTaskComplete?.(taskName)
           advanceScheduler({ type: "complete", taskId })
         }
       },
     })
+    .then((result) => {
+      if (pipelineStopped) return
+      // Check if nested pipeline failed
+      if (!result.ok) {
+        runningPipelines.delete(taskId)
+        const finishedAt = Date.now()
+        updateTaskStatus(taskId, {
+          status: "failed",
+          finishedAt,
+          durationMs: finishedAt - startedAt,
+          error: result.error,
+        })
+        failPipeline(result.error)
+      }
+    })
     .catch((error) => {
       if (pipelineStopped) return
       runningPipelines.delete(taskId)
+      const finishedAt = Date.now()
+      updateTaskStatus(taskId, {
+        status: "failed",
+        finishedAt,
+        durationMs: finishedAt - startedAt,
+        error: error instanceof Error ? error : new Error(String(error)),
+      })
       failPipeline(error)
     })
 }
@@ -183,6 +236,7 @@ function executeRegularTask(
     teardownManager,
     failPipeline,
     advanceScheduler,
+    updateTaskStatus,
   } = executorConfig
 
   const commandName =
@@ -198,18 +252,30 @@ function executeRegularTask(
 
     // If strict mode and not explicitly allowed to skip, fail
     if (strict && !allowSkip) {
-      failPipeline(
-        new PipelineError(
-          `[${taskName}] No command for "${commandName}" and strict mode is enabled`,
-          PipelineError.TaskFailed,
-          taskName
-        )
+      const error = new PipelineError(
+        `[${taskName}] No command for "${commandName}" and strict mode is enabled`,
+        PipelineError.TaskFailed,
+        taskName
       )
+      const finishedAt = Date.now()
+      updateTaskStatus(taskId, {
+        status: "failed",
+        command: commandName,
+        finishedAt,
+        error,
+      })
+      failPipeline(error)
       return
     }
 
     // Skip the task
-    console.log(`[${taskName}] skipped "${commandName}"`)
+    const finishedAt = Date.now()
+    updateTaskStatus(taskId, {
+      status: "skipped",
+      command: commandName,
+      finishedAt,
+      durationMs: 0,
+    })
     config?.onTaskSkipped?.(taskName, commandName)
     // Mark as skipped - this satisfies dependencies and unblocks dependents
     // Use setImmediate to ensure scheduler is at idle yield before receiving skip
@@ -239,13 +305,20 @@ function executeRegularTask(
     : path.resolve(process.cwd(), cwd)
 
   if (!fs.existsSync(taskCwd)) {
-    failPipeline(
-      new PipelineError(
-        `[${taskName}] Working directory does not exist: ${taskCwd}`,
-        PipelineError.InvalidTask,
-        taskName
-      )
+    const finishedAt = Date.now()
+    const pipelineError = new PipelineError(
+      `[${taskName}] Working directory does not exist: ${taskCwd}`,
+      PipelineError.InvalidTask,
+      taskName
     )
+    updateTaskStatus(taskId, {
+      status: "failed",
+      command: commandName,
+      finishedAt,
+      durationMs: 0,
+      error: pipelineError,
+    })
+    failPipeline(pipelineError)
     return
   }
 
@@ -272,6 +345,13 @@ function executeRegularTask(
 
   runningTasks.set(taskId, child)
 
+  const startedAt = Date.now()
+  updateTaskStatus(taskId, {
+    status: "running",
+    command: commandName,
+    startedAt,
+  })
+
   // Store teardown command if provided
   if (teardown) {
     teardownManager.register(taskId, {
@@ -293,13 +373,19 @@ function executeRegularTask(
     // Set up timeout for readyWhen condition
     readyTimeoutId = setTimeout(() => {
       if (!didMarkReady) {
-        failPipeline(
-          new PipelineError(
-            `[${taskName}] Task did not become ready within ${readyTimeout}ms`,
-            PipelineError.TaskFailed,
-            taskName
-          )
+        const finishedAt = Date.now()
+        const pipelineError = new PipelineError(
+          `[${taskName}] Task did not become ready within ${readyTimeout}ms`,
+          PipelineError.TaskFailed,
+          taskName
         )
+        updateTaskStatus(taskId, {
+          status: "failed",
+          finishedAt,
+          durationMs: finishedAt - startedAt,
+          error: pipelineError,
+        })
+        failPipeline(pipelineError)
       }
     }, readyTimeout)
   }
@@ -341,16 +427,22 @@ function executeRegularTask(
       readyTimeoutId = null
     }
 
-    failPipeline(
-      new PipelineError(
-        `[${taskName}] Failed to start: ${error.message}`,
-        PipelineError.TaskFailed,
-        taskName
-      )
+    const finishedAt = Date.now()
+    const pipelineError = new PipelineError(
+      `[${taskName}] Failed to start: ${error.message}`,
+      PipelineError.TaskFailed,
+      taskName
     )
+    updateTaskStatus(taskId, {
+      status: "failed",
+      finishedAt,
+      durationMs: finishedAt - startedAt,
+      error: pipelineError,
+    })
+    failPipeline(pipelineError)
   })
 
-  child.on("exit", (code: number | null) => {
+  child.on("exit", (code: number | null, signal: string | null) => {
     runningTasks.delete(taskId)
 
     // Clear ready timeout if it exists
@@ -359,20 +451,36 @@ function executeRegularTask(
       readyTimeoutId = null
     }
 
+    const finishedAt = Date.now()
+    const durationMs = finishedAt - startedAt
+
     // Don't execute teardown immediately - it will be executed in reverse dependency order
     // when the pipeline completes or fails
 
-    if (code !== 0) {
-      failPipeline(
-        new PipelineError(
-          `[${taskName}] Task failed with non-zero exit code: ${code}`,
-          PipelineError.TaskFailed,
-          taskName
-        )
+    if (code !== 0 || signal) {
+      const pipelineError = new PipelineError(
+        `[${taskName}] Task failed with non-zero exit code: ${code ?? signal}`,
+        PipelineError.TaskFailed,
+        taskName
       )
+      updateTaskStatus(taskId, {
+        status: "failed",
+        finishedAt,
+        durationMs,
+        exitCode: code ?? undefined,
+        signal: signal ?? undefined,
+        error: pipelineError,
+      })
+      failPipeline(pipelineError)
       return
     }
 
+    updateTaskStatus(taskId, {
+      status: "completed",
+      finishedAt,
+      durationMs,
+      exitCode: code ?? 0,
+    })
     config?.onTaskComplete?.(taskName)
 
     // 🔑 Notify scheduler and drain newly runnable tasks

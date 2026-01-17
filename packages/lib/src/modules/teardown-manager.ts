@@ -10,6 +10,11 @@ export interface TeardownManagerConfig {
   spawn: typeof import("node:child_process").spawn
   onTaskTeardown?: (taskName: string) => void
   onTaskTeardownError?: (taskName: string, error: Error) => void
+  updateTaskTeardownStatus: (
+    taskId: string,
+    status: "not-run" | "completed" | "failed",
+    error?: Error
+  ) => void
 }
 
 export interface TeardownManager {
@@ -32,7 +37,11 @@ export function createTeardownManager(
    */
   const executeTeardown = (taskId: string): Promise<void> => {
     const teardown = teardownCommands.get(taskId)
-    if (!teardown) return Promise.resolve()
+    if (!teardown) {
+      // No teardown registered, mark as not-run
+      config.updateTaskTeardownStatus(taskId, "not-run")
+      return Promise.resolve()
+    }
 
     // Remove from map so it doesn't run again
     teardownCommands.delete(taskId)
@@ -60,6 +69,7 @@ export function createTeardownManager(
             `[${teardown.taskName}] Teardown failed: ${error.message}`
           )
           config.onTaskTeardownError?.(teardown.taskName, teardownError)
+          config.updateTaskTeardownStatus(taskId, "failed", teardownError)
           resolveOnce()
         })
 
@@ -71,6 +81,9 @@ export function createTeardownManager(
               }`
             )
             config.onTaskTeardownError?.(teardown.taskName, teardownError)
+            config.updateTaskTeardownStatus(taskId, "failed", teardownError)
+          } else {
+            config.updateTaskTeardownStatus(taskId, "completed")
           }
           resolveOnce()
         })
@@ -79,6 +92,7 @@ export function createTeardownManager(
           `[${teardown.taskName}] Teardown failed to start: ${error.message}`
         )
         config.onTaskTeardownError?.(teardown.taskName, teardownError)
+        config.updateTaskTeardownStatus(taskId, "failed", teardownError)
         resolve()
       }
     })
@@ -116,6 +130,11 @@ export function createTeardownManager(
       // Execute teardowns sequentially in reverse dependency order
       for (const taskId of teardownOrder) {
         await executeTeardown(taskId)
+      }
+
+      // Mark any remaining tasks (that had teardown registered but weren't in the order) as not-run
+      for (const taskId of teardownCommands.keys()) {
+        config.updateTaskTeardownStatus(taskId, "not-run")
       }
     },
   }

@@ -9,7 +9,14 @@ import { validateTasks } from "./util.js"
 import { createTeardownManager } from "./modules/teardown-manager.js"
 import { createSignalHandler } from "./modules/signal-handler.js"
 import { executeTask } from "./modules/task-executor.js"
-import type { Pipeline, Task, PipelineTaskConfig } from "./types.js"
+import type {
+  Pipeline,
+  Task,
+  PipelineTaskConfig,
+  RunResult,
+  PipelineStats,
+  TaskStats,
+} from "./types.js"
 
 // Module-level cache for pipeline-to-task conversions
 // Key: Pipeline, Value: Map of name -> Task
@@ -17,6 +24,68 @@ const pipelineTaskCache = new WeakMap<Pipeline, Map<string, Task>>()
 
 // Store tasks for each pipeline (for nested pipeline skip tracking)
 const pipelineTasksCache = new WeakMap<Pipeline, Task[]>()
+
+function buildResult(
+  error: PipelineError | null,
+  startedAt: number,
+  command: string,
+  taskStats: Map<string, TaskStats>,
+  status: "success" | "failed" | "aborted"
+): RunResult {
+  const finishedAt = Date.now()
+  const durationMs = finishedAt - startedAt
+
+  // Convert task stats map to record
+  const tasks: Record<string, TaskStats> = {}
+  for (const [taskId, stats] of taskStats) {
+    tasks[taskId] = stats
+  }
+
+  // Calculate summary
+  let completed = 0
+  let failed = 0
+  let skipped = 0
+  let running = 0
+
+  for (const stats of taskStats.values()) {
+    switch (stats.status) {
+      case "completed":
+        completed++
+        break
+      case "failed":
+        failed++
+        break
+      case "skipped":
+        skipped++
+        break
+      case "running":
+        running++
+        break
+    }
+  }
+
+  const pipelineStats: PipelineStats = {
+    command,
+    startedAt,
+    finishedAt,
+    durationMs,
+    status,
+    tasks,
+    summary: {
+      total: taskStats.size,
+      completed,
+      failed,
+      skipped,
+      running,
+    },
+  }
+
+  if (error) {
+    return { ok: false, error, stats: pipelineStats }
+  } else {
+    return { ok: true, error: null, stats: pipelineStats }
+  }
+}
 
 /**
  * Creates a pipeline that manages task execution with dependency-based coordination.
@@ -59,31 +128,68 @@ export function pipeline(tasks: Task[]): Pipeline {
       return syntheticTask
     },
 
-    async run(config): Promise<void> {
+    async run(config): Promise<RunResult> {
       const spawnFn = config?.spawn ?? spawn
       const signal = config?.signal
       const runningTasks = new Map<string, ChildProcess>()
       const runningPipelines = new Map<string, { stop: () => void }>()
       let failed = false
 
+      const command =
+        config?.command ??
+        (process.env.NODE_ENV === "production" ? "build" : "dev")
+      const startedAt = Date.now()
+
+      // Initialize task stats tracking
+      const taskStats = new Map<string, TaskStats>()
+      for (const [taskId, node] of graph.nodes) {
+        const task = node.task
+        taskStats.set(taskId, {
+          id: taskId,
+          name: task.name,
+          status: "pending",
+          dependencies: Array.from(node.dependencies),
+          dependents: Array.from(node.dependents),
+        })
+      }
+
+      // Helper to update task status
+      const updateTaskStatus = (
+        taskId: string,
+        updates: Partial<TaskStats>
+      ) => {
+        const stats = taskStats.get(taskId)
+        if (stats) {
+          Object.assign(stats, updates)
+        }
+      }
+
       // Check if signal is already aborted
       if (signal?.aborted) {
-        throw new PipelineError("Aborted", PipelineError.Aborted)
+        const error = new PipelineError("Aborted", PipelineError.Aborted)
+        return buildResult(error, startedAt, command, taskStats, "aborted")
       }
 
       const scheduler = createScheduler(graph)
 
-      let completionResolver: (() => void) | null = null
-      let completionRejector: ((error: PipelineError) => void) | null = null
-      const completionPromise = new Promise<void>((resolve, reject) => {
-        completionResolver = resolve
-        completionRejector = reject
-      })
+      let completionResolver: ((error: PipelineError | null) => void) | null =
+        null
+      const completionPromise = new Promise<PipelineError | null>(
+        (resolve) => {
+          completionResolver = resolve
+        }
+      )
 
-      // Initialize teardown manager
+      // Initialize teardown manager with stats tracking
       const teardownManager = createTeardownManager({
         ...config,
         spawn: spawnFn,
+        updateTaskTeardownStatus: (taskId, status, error) => {
+          const stats = taskStats.get(taskId)
+          if (stats) {
+            stats.teardown = { status, error }
+          }
+        },
       })
 
       const advanceScheduler = (input?: SchedulerInput) => {
@@ -117,7 +223,7 @@ export function pipeline(tasks: Task[]): Pipeline {
 
           if (isFinished) {
             config?.onPipelineComplete?.()
-            completionResolver?.()
+            completionResolver?.(null)
             return
           }
 
@@ -137,7 +243,16 @@ export function pipeline(tasks: Task[]): Pipeline {
         if (failed) return
         failed = true
 
-        for (const child of runningTasks.values()) {
+        // Mark running tasks as aborted
+        for (const [taskId, child] of runningTasks.entries()) {
+          updateTaskStatus(taskId, {
+            status: "aborted",
+            finishedAt: Date.now(),
+          })
+          const stats = taskStats.get(taskId)
+          if (stats && stats.startedAt) {
+            stats.durationMs = stats.finishedAt! - stats.startedAt
+          }
           try {
             child.kill("SIGTERM")
           } catch {}
@@ -160,7 +275,7 @@ export function pipeline(tasks: Task[]): Pipeline {
         }
 
         config?.onPipelineError?.(error)
-        completionRejector?.(error)
+        completionResolver?.(error)
       }
 
       const startTask = (task: Task) => {
@@ -175,6 +290,8 @@ export function pipeline(tasks: Task[]): Pipeline {
           pipelineTasksCache,
           failPipeline,
           advanceScheduler,
+          updateTaskStatus,
+          taskStats,
         })
       }
 
@@ -189,22 +306,29 @@ export function pipeline(tasks: Task[]): Pipeline {
       // 🚀 Kick off initial runnable tasks
       advanceScheduler()
 
-      await completionPromise
-        .then(async () => {
-          // Pipeline completed successfully - execute any remaining teardowns
-          // (for tasks that completed successfully) and wait for them to complete
-          // Even if teardowns fail, the pipeline still resolves successfully
-          // (teardown errors are reported via onTaskTeardownError)
-          try {
-            await teardownManager.executeAll(graph)
-          } catch (teardownError) {
-            // Teardown errors are already reported via onTaskTeardownError
-            // The pipeline still resolves successfully
-          }
-        })
-        .finally(() => {
-          signalHandler.cleanup()
-        })
+      const error = await completionPromise.then(async (err) => {
+        // Pipeline completed - execute any remaining teardowns
+        // (for tasks that completed successfully) and wait for them to complete
+        // Even if teardowns fail, the pipeline still resolves successfully
+        // (teardown errors are reported via onTaskTeardownError)
+        try {
+          await teardownManager.executeAll(graph)
+        } catch (teardownError) {
+          // Teardown errors are already reported via onTaskTeardownError
+          // The pipeline still resolves successfully
+        }
+        return err
+      })
+
+      signalHandler.cleanup()
+
+      const status: "success" | "failed" | "aborted" = error
+        ? error.code === PipelineError.Aborted
+          ? "aborted"
+          : "failed"
+        : "success"
+
+      return buildResult(error, startedAt, command, taskStats, status)
     },
   }
 

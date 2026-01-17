@@ -193,10 +193,10 @@ export interface Pipeline {
    * Tasks with no dependencies start immediately, and tasks with dependencies
    * wait for their dependencies to complete before starting.
    * @param config Optional configuration for pipeline execution.
-   * @returns A promise that resolves when all tasks complete successfully,
-   *          or rejects if any task fails or the pipeline is aborted.
+   * @returns A promise that resolves with a RunResult containing execution stats.
+   *          The result will have `ok: false` if any task fails or the pipeline is aborted.
    */
-  run(config?: PipelineRunConfig): Promise<void>
+  run(config?: PipelineRunConfig): Promise<RunResult>
   /**
    * Converts this pipeline into a task that can be used as a dependency
    * in another pipeline. This enables nested pipelines.
@@ -225,3 +225,215 @@ export interface TaskGraph {
    */
   simplify(): void
 }
+
+/**
+ * Status of a task in the pipeline.
+ * - "pending": Task has not started yet
+ * - "skipped": Task was skipped (e.g., no command for the current mode)
+ * - "running": Task is currently executing
+ * - "completed": Task completed successfully
+ * - "failed": Task failed during execution
+ * - "aborted": Task was aborted (e.g., due to pipeline cancellation)
+ */
+export type TaskStatus =
+  | "pending"
+  | "skipped"
+  | "running"
+  | "completed"
+  | "failed"
+  | "aborted"
+
+/**
+ * Statistics for a single task in the pipeline.
+ */
+export interface TaskStats {
+  /**
+   * Unique identifier for the task.
+   */
+  id: string
+  /**
+   * Human-readable name of the task.
+   */
+  name: string
+  /**
+   * Current status of the task.
+   */
+  status: TaskStatus
+  /**
+   * Command name that was executed (e.g., "dev", "build").
+   * Only present if the task was executed or skipped (not if it's still pending).
+   */
+  command?: string
+  /**
+   * Timestamp (milliseconds since epoch) when the task started execution.
+   * Only present if the task started running.
+   */
+  startedAt?: number
+  /**
+   * Timestamp (milliseconds since epoch) when the task finished execution.
+   * Only present if the task completed, failed, was skipped, or was aborted.
+   */
+  finishedAt?: number
+  /**
+   * Duration of task execution in milliseconds.
+   * Only present if the task has finished (completed, failed, skipped, or aborted).
+   */
+  durationMs?: number
+  /**
+   * Exit code of the task's process.
+   * Only present if the task completed or failed.
+   * Typically 0 for success, non-zero for failure.
+   */
+  exitCode?: number
+  /**
+   * Signal that terminated the task's process (e.g., "SIGTERM", "SIGKILL").
+   * Only present if the task was terminated by a signal.
+   */
+  signal?: string
+  /**
+   * Error that occurred during task execution.
+   * Only present if the task failed or was aborted.
+   */
+  error?: Error
+  /**
+   * Teardown command execution status.
+   * Only present if the task had a teardown command configured.
+   */
+  teardown?: {
+    /**
+     * Status of the teardown command execution.
+     * - "not-run": Teardown was registered but never executed (e.g., task failed before starting)
+     * - "completed": Teardown executed successfully
+     * - "failed": Teardown execution failed
+     */
+    status: "not-run" | "completed" | "failed"
+    /**
+     * Error that occurred during teardown execution.
+     * Only present if teardown status is "failed".
+     */
+    error?: Error
+  }
+  /**
+   * Array of task IDs that this task depends on.
+   * These tasks must complete before this task can start.
+   */
+  dependencies: string[]
+  /**
+   * Array of task IDs that depend on this task.
+   * These tasks cannot start until this task completes.
+   */
+  dependents: string[]
+}
+
+/**
+ * Statistics for the entire pipeline execution.
+ */
+export interface PipelineStats {
+  /**
+   * Command name that was executed for this pipeline run (e.g., "dev", "build").
+   */
+  command: string
+  /**
+   * Timestamp (milliseconds since epoch) when the pipeline started.
+   */
+  startedAt: number
+  /**
+   * Timestamp (milliseconds since epoch) when the pipeline finished.
+   */
+  finishedAt: number
+  /**
+   * Total duration of pipeline execution in milliseconds.
+   */
+  durationMs: number
+  /**
+   * Overall status of the pipeline.
+   * - "success": All tasks completed successfully
+   * - "failed": One or more tasks failed
+   * - "aborted": Pipeline was aborted (e.g., due to signal cancellation)
+   */
+  status: "success" | "failed" | "aborted"
+  /**
+   * Map of task IDs to their statistics.
+   * Contains statistics for all tasks in the pipeline, regardless of their status.
+   */
+  tasks: Record<string, TaskStats>
+  /**
+   * Summary of task execution counts.
+   */
+  summary: {
+    /**
+     * Total number of tasks in the pipeline.
+     */
+    total: number
+    /**
+     * Number of tasks that completed successfully.
+     */
+    completed: number
+    /**
+     * Number of tasks that failed.
+     */
+    failed: number
+    /**
+     * Number of tasks that were skipped.
+     */
+    skipped: number
+    /**
+     * Number of tasks that were still running when the pipeline ended.
+     * This is useful when the pipeline was aborted - it indicates how many
+     * tasks were in progress and had to be terminated.
+     */
+    running: number
+  }
+}
+
+/**
+ * Result of running a pipeline.
+ * The pipeline never throws - it always returns a RunResult with detailed statistics.
+ *
+ * @example
+ * ```ts
+ * const result = await pipeline(tasks).run({ command: "dev" })
+ *
+ * if (!result.ok) {
+ *   console.error("Pipeline failed:", result.error)
+ * }
+ *
+ * console.log("Pipeline stats:", result.stats)
+ * console.log(`Completed: ${result.stats.summary.completed}`)
+ * console.log(`Failed: ${result.stats.summary.failed}`)
+ * ```
+ */
+export type RunResult =
+  | {
+      /**
+       * Indicates the pipeline completed successfully.
+       * When true, `error` is always `null`.
+       */
+      ok: true
+      /**
+       * Always `null` when `ok` is `true`.
+       */
+      error: null
+      /**
+       * Pipeline execution statistics.
+       */
+      stats: PipelineStats
+    }
+  | {
+      /**
+       * Indicates the pipeline failed or was aborted.
+       * When false, `error` contains the PipelineError that caused the failure.
+       */
+      ok: false
+      /**
+       * The error that caused the pipeline to fail.
+       * Check `error.code` to determine the error type (e.g., `PipelineError.TaskFailed`).
+       */
+      error: PipelineError
+      /**
+       * Pipeline execution statistics.
+       * Even when the pipeline fails, stats contain information about all tasks,
+       * including which ones completed, failed, or were still running.
+       */
+      stats: PipelineStats
+    }

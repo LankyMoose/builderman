@@ -317,7 +317,7 @@ describe("pipeline", () => {
     const mockSpawn = createMockSpawn()
 
     const pipe = pipeline([task1, task2])
-    await pipe.run({
+    const result = await pipe.run({
       spawn: mockSpawn as any,
       onTaskBegin: (name) => {
         executionOrder.push(name)
@@ -326,6 +326,15 @@ describe("pipeline", () => {
         executionOrder.push(`complete:${name}`)
       },
     })
+
+    // Check result
+    assert.strictEqual(result.ok, true)
+    assert.strictEqual(result.error, null)
+    assert.strictEqual(result.stats.status, "success")
+    assert.strictEqual(result.stats.summary.total, 2)
+    assert.strictEqual(result.stats.summary.completed, 2)
+    assert.strictEqual(result.stats.summary.failed, 0)
+    assert.strictEqual(result.stats.summary.skipped, 0)
 
     // task1 should start before task2
     assert.strictEqual(executionOrder.indexOf("task1"), 0)
@@ -344,21 +353,39 @@ describe("pipeline", () => {
     const pipe = pipeline([task1])
     let errorCaught = false
 
-    await pipe
-      .run({
-        spawn: mockSpawn as any,
-        onPipelineError: (error) => {
-          assert.strictEqual(error.code, PipelineError.TaskFailed)
-          assert.strictEqual(
-            error.message,
-            "[task1] Task failed with non-zero exit code: 1"
-          )
-          errorCaught = true
-        },
-      })
-      .catch(() => {
-        // Expected to reject
-      })
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+      onPipelineError: (error) => {
+        assert.strictEqual(error.code, PipelineError.TaskFailed)
+        assert.strictEqual(
+          error.message,
+          "[task1] Task failed with non-zero exit code: 1"
+        )
+        errorCaught = true
+      },
+    })
+
+    // Check result
+    assert.strictEqual(result.ok, false)
+    assert.ok(result.error)
+    assert.strictEqual(result.error.code, PipelineError.TaskFailed)
+    assert.strictEqual(
+      result.error.message,
+      "[task1] Task failed with non-zero exit code: 1"
+    )
+    assert.strictEqual(result.stats.status, "failed")
+    assert.strictEqual(result.stats.summary.total, 1)
+    assert.strictEqual(result.stats.summary.completed, 0)
+    assert.strictEqual(result.stats.summary.failed, 1)
+    
+    // Check task stats
+    const taskStats = Object.values(result.stats.tasks)[0]
+    assert.strictEqual(taskStats.status, "failed")
+    assert.strictEqual(taskStats.exitCode, 1)
+    assert.ok(taskStats.error)
+    assert.ok(taskStats.startedAt)
+    assert.ok(taskStats.finishedAt)
+    assert.ok(taskStats.durationMs !== undefined)
 
     assert.ok(errorCaught)
   })
@@ -375,12 +402,28 @@ describe("pipeline", () => {
     const pipe = pipeline([task1])
     let pipelineCompleteCalled = false
 
-    await pipe.run({
+    const result = await pipe.run({
       spawn: mockSpawn as any,
       onPipelineComplete: () => {
         pipelineCompleteCalled = true
       },
     })
+
+    // Check result
+    assert.strictEqual(result.ok, true)
+    assert.strictEqual(result.error, null)
+    assert.strictEqual(result.stats.status, "success")
+    assert.strictEqual(result.stats.summary.total, 1)
+    assert.strictEqual(result.stats.summary.completed, 1)
+    assert.strictEqual(result.stats.summary.failed, 0)
+    
+    // Check task stats
+    const taskStats = Object.values(result.stats.tasks)[0]
+    assert.strictEqual(taskStats.status, "completed")
+    assert.strictEqual(taskStats.exitCode, 0)
+    assert.ok(taskStats.startedAt)
+    assert.ok(taskStats.finishedAt)
+    assert.ok(taskStats.durationMs !== undefined)
 
     assert.ok(pipelineCompleteCalled)
   })
@@ -431,12 +474,15 @@ describe("pipeline", () => {
     })
 
     const pipe = pipeline([task1, task2])
-    await pipe.run({
+    const result = await pipe.run({
       spawn: mockSpawn as any,
       onTaskBegin: (name) => {
         executionOrder.push(`${name}:started`)
       },
     })
+
+    assert.strictEqual(result.ok, true)
+    assert.strictEqual(result.stats.status, "success")
 
     // task1 should start first
     assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
@@ -486,12 +532,14 @@ describe("pipeline", () => {
     })
 
     const pipe = pipeline([task1, task2])
-    await pipe.run({
+    const result = await pipe.run({
       spawn: mockSpawn as any,
       onTaskBegin: (name) => {
         executionOrder.push(`${name}:started`)
       },
     })
+
+    assert.strictEqual(result.ok, true)
 
     // task1 should start first
     assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
@@ -558,12 +606,14 @@ describe("pipeline", () => {
     })
 
     const pipe = pipeline([task1, task2, task3])
-    await pipe.run({
+    const result = await pipe.run({
       spawn: mockSpawn as any,
       onTaskBegin: (name) => {
         executionOrder.push(`${name}:started`)
       },
     })
+
+    assert.strictEqual(result.ok, true)
 
     // task1 should start first
     assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
@@ -648,12 +698,14 @@ describe("pipeline", () => {
     })
 
     const pipe = pipeline([task1, task2, task3])
-    await pipe.run({
+    const result = await pipe.run({
       spawn: mockSpawn as any,
       onTaskBegin: (name) => {
         executionOrder.push(`${name}:started`)
       },
     })
+
+    assert.strictEqual(result.ok, true)
 
     // task1 and task2 should start (order doesn't matter)
     assert.ok(executionOrder.includes("task1:started"))
@@ -732,7 +784,7 @@ describe("pipeline", () => {
     const pipe = pipeline([task1, task2])
     const completedTasks: string[] = []
 
-    const runPromise = pipe.run({
+    const result = await pipe.run({
       spawn: mockSpawn as any,
       signal: abortController.signal,
       onTaskComplete: (name) => {
@@ -750,11 +802,11 @@ describe("pipeline", () => {
       },
     })
 
-    try {
-      await runPromise
-    } catch (error) {
-      // Expected to reject when signal is aborted
-    }
+    // Check result
+    assert.strictEqual(result.ok, false)
+    assert.ok(result.error)
+    assert.strictEqual(result.error.code, PipelineError.Aborted)
+    assert.strictEqual(result.stats.status, "aborted")
 
     // Wait a bit for all async operations to complete
     await new Promise((resolve) => setTimeout(resolve, 20))
@@ -782,22 +834,19 @@ describe("pipeline", () => {
     })
 
     const pipe = pipeline([task1])
-    let errorThrown = false
+    const result = await pipe.run({
+      signal: abortController.signal,
+    })
 
-    try {
-      await pipe.run({
-        signal: abortController.signal,
-      })
-    } catch (error) {
-      const e = error as PipelineError
-      errorThrown = true
-      assert.ok(
-        e.code === PipelineError.Aborted,
-        `Error should indicate signal was already aborted. Got ${e.code}. Message: ${e}`
-      )
-    }
-
-    assert.ok(errorThrown, "Should throw error when signal is already aborted")
+    // Check result
+    assert.strictEqual(result.ok, false)
+    assert.ok(result.error)
+    assert.strictEqual(
+      result.error.code,
+      PipelineError.Aborted,
+      `Error should indicate signal was already aborted. Got ${result.error.code}. Message: ${result.error}`
+    )
+    assert.strictEqual(result.stats.status, "aborted")
   })
 
   describe("teardown", () => {
@@ -830,9 +879,16 @@ describe("pipeline", () => {
       })
 
       const pipe = pipeline([task1])
-      await pipe.run({
+      const result = await pipe.run({
         spawn: mockSpawn as any,
       })
+
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(result.stats.status, "success")
+      
+      // Check teardown status
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
         teardownExecuted,
@@ -878,16 +934,19 @@ describe("pipeline", () => {
       let taskFailed = false
 
       const pipe = pipeline([task1])
-      try {
-        await pipe.run({
-          spawn: mockSpawn as any,
-          onPipelineError: (err) => {
-            taskFailed = err.taskName === "task1"
-          },
-        })
-      } catch {
-        // Expected to fail
-      }
+      const result = await pipe.run({
+        spawn: mockSpawn as any,
+        onPipelineError: (err) => {
+          taskFailed = err.taskName === "task1"
+        },
+      })
+
+      assert.strictEqual(result.ok, false)
+      assert.strictEqual(result.stats.status, "failed")
+      
+      // Check teardown status
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
         taskFailed && teardownExecuted,
@@ -941,11 +1000,14 @@ describe("pipeline", () => {
       // Abort the signal
       abortController.abort()
 
-      try {
-        await runPromise
-      } catch {
-        // Expected to reject
-      }
+      const result = await runPromise
+
+      assert.strictEqual(result.ok, false)
+      assert.strictEqual(result.stats.status, "aborted")
+      
+      // Check teardown status
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
         teardownExecuted,
@@ -963,7 +1025,7 @@ describe("pipeline", () => {
             run: "echo task1",
             teardown: "echo teardown",
           },
-          build: "echo task1", // No teardown for build mode
+          // No build command - task will be skipped in production mode
         },
         cwd: ".",
       })
@@ -985,14 +1047,19 @@ describe("pipeline", () => {
       const originalEnv = process.env.NODE_ENV
       process.env.NODE_ENV = "production"
 
-      try {
-        const pipe = pipeline([task1])
-        await pipe.run({
-          spawn: mockSpawn as any,
-        })
-      } finally {
-        process.env.NODE_ENV = originalEnv
-      }
+      const pipe = pipeline([task1])
+      const result = await pipe.run({
+        spawn: mockSpawn as any,
+      })
+      process.env.NODE_ENV = originalEnv
+      
+      assert.strictEqual(result.ok, true)
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.status, "skipped")
+      // Teardown is undefined for skipped tasks (never registered)
+      assert.strictEqual(taskStats.teardown, undefined)
+      
+
 
       assert.ok(
         !teardownExecuted,
@@ -1029,13 +1096,15 @@ describe("pipeline", () => {
       })
 
       const pipe = pipeline([task1])
-      try {
-        await pipe.run({
-          spawn: mockSpawn as any,
-        })
-      } catch {
-        // Expected to fail
-      }
+      const result = await pipe.run({
+        spawn: mockSpawn as any,
+      })
+
+      assert.strictEqual(result.ok, false)
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.status, "failed")
+      // Teardown is undefined for tasks that failed before starting (never registered)
+      assert.strictEqual(taskStats.teardown, undefined)
 
       assert.ok(
         !teardownExecuted,
@@ -1106,13 +1175,12 @@ describe("pipeline", () => {
       })
 
       const pipe = pipeline([task1, task2])
-      try {
-        await pipe.run({
-          spawn: mockSpawn as any,
-        })
-      } catch {
-        // Expected to fail
-      }
+      const result = await pipe.run({
+        spawn: mockSpawn as any,
+      })
+
+      assert.strictEqual(result.ok, false)
+      assert.strictEqual(result.stats.status, "failed")
 
       // Wait a bit for any async operations
       await new Promise((resolve) => setTimeout(resolve, 20))
@@ -1125,6 +1193,13 @@ describe("pipeline", () => {
         !task2TeardownExecuted,
         "task2's teardown should NOT be executed if task2 never started"
       )
+      
+      // Check task2 stats
+      const task2Stats = Object.values(result.stats.tasks).find(
+        (t) => t.name === "task2"
+      )
+      assert.ok(task2Stats)
+      assert.strictEqual(task2Stats.status, "pending")
     })
 
     it("executes teardowns in reverse dependency order", async () => {
@@ -1177,9 +1252,11 @@ describe("pipeline", () => {
       })
 
       const pipe = pipeline([db, api])
-      await pipe.run({
+      const result = await pipe.run({
         spawn: mockSpawn as any,
       })
+
+      assert.strictEqual(result.ok, true)
 
       // api should be torn down before db (reverse dependency order)
       assert.strictEqual(
@@ -1215,7 +1292,7 @@ describe("pipeline", () => {
       const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1])
-      await pipe.run({
+      const result = await pipe.run({
         command: "build",
         spawn: mockSpawn as any,
         onTaskSkipped: (taskName, mode) => {
@@ -1231,6 +1308,14 @@ describe("pipeline", () => {
         0,
         "No command should be executed"
       )
+      
+      // Check result
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(result.stats.status, "success")
+      assert.strictEqual(result.stats.summary.skipped, 1)
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.status, "skipped")
+      assert.strictEqual(taskStats.command, "build")
     })
 
     it("skipped task satisfies dependencies", async () => {
@@ -1257,13 +1342,17 @@ describe("pipeline", () => {
       const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1, task2])
-      await pipe.run({
+      const result = await pipe.run({
         command: "build",
         spawn: mockSpawn as any,
         onTaskBegin: (taskName) => {
           executionOrder.push(`begin:${taskName}`)
         },
       })
+
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(result.stats.summary.skipped, 1)
+      assert.strictEqual(result.stats.summary.completed, 1)
 
       // task1 should be skipped, task2 should run
       assert.ok(executionOrder.includes("begin:task2"), "task2 should run")
@@ -1282,24 +1371,26 @@ describe("pipeline", () => {
       const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1])
-      let error: any
-      try {
-        await pipe.run({
-          command: "build",
-          strict: true,
-          spawn: mockSpawn as any,
-        })
-      } catch (e) {
-        error = e
-      }
+      const result = await pipe.run({
+        command: "build",
+        strict: true,
+        spawn: mockSpawn as any,
+      })
 
-      assert.ok(error, "Should throw error in strict mode")
-      assert.ok(error instanceof PipelineError, "Should be PipelineError")
-      assert.strictEqual(error.code, PipelineError.TaskFailed)
+      assert.strictEqual(result.ok, false)
+      assert.ok(result.error)
+      assert.ok(result.error instanceof PipelineError)
+      assert.strictEqual(result.error.code, PipelineError.TaskFailed)
       assert.ok(
-        error.message.includes("strict mode"),
+        result.error.message.includes("strict mode"),
         "Error should mention strict mode"
       )
+      assert.strictEqual(result.stats.status, "failed")
+      
+      // Check task stats
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.status, "failed")
+      assert.strictEqual(taskStats.command, "build")
     })
 
     it("allows skip in strict mode with allowSkip", async () => {
@@ -1317,7 +1408,7 @@ describe("pipeline", () => {
       const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([task1])
-      await pipe.run({
+      const result = await pipe.run({
         command: "build",
         strict: true,
         spawn: mockSpawn as any,
@@ -1327,6 +1418,11 @@ describe("pipeline", () => {
           skippedCalled = true
         },
       })
+
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(result.stats.summary.skipped, 1)
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.status, "skipped")
 
       assert.ok(skippedCalled, "onTaskSkipped should be called")
       assert.strictEqual(
@@ -1362,7 +1458,7 @@ describe("pipeline", () => {
       const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([outerTask])
-      await pipe.run({
+      const result = await pipe.run({
         command: "build",
         spawn: mockSpawn as any,
         onTaskSkipped: (taskName, _mode) => {
@@ -1371,6 +1467,11 @@ describe("pipeline", () => {
           }
         },
       })
+
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(result.stats.summary.skipped, 1)
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.status, "skipped")
 
       assert.ok(
         outerSkipped,
@@ -1409,7 +1510,7 @@ describe("pipeline", () => {
       const mockSpawn = createMockSpawn()
 
       const pipe = pipeline([outerTask])
-      await pipe.run({
+      const result = await pipe.run({
         command: "build",
         spawn: mockSpawn as any,
         onTaskComplete: (taskName) => {
@@ -1418,6 +1519,11 @@ describe("pipeline", () => {
           }
         },
       })
+
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(result.stats.summary.completed, 1)
+      const taskStats = Object.values(result.stats.tasks)[0]
+      assert.strictEqual(taskStats.status, "completed")
 
       assert.ok(
         outerCompleted,
@@ -1475,7 +1581,7 @@ describe("pipeline <-> task conversion", () => {
 
     const ci = pipeline([buildTask, testTask, deployTask])
 
-    await ci.run({
+    const result = await ci.run({
       spawn: mockSpawn as any,
       onTaskBegin: (name) => {
         // For nested pipelines, name format is "pipelineTask:nestedTask" (e.g., "build:build:compile")
@@ -1489,6 +1595,9 @@ describe("pipeline <-> task conversion", () => {
         executionOrder.push(`pipeline-complete:${name}`)
       },
     })
+
+    assert.strictEqual(result.ok, true)
+    assert.strictEqual(result.stats.status, "success")
 
     // Verify execution order: build pipeline should complete before test starts
     // Note: pipeline-complete events fire when the scheduler is done, which may be
