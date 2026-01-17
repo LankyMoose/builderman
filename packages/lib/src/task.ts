@@ -1,6 +1,6 @@
 import { $TASK_INTERNAL } from "./constants.js"
 import { validateTasks } from "./util.js"
-import type { TaskConfig, Task, Commands } from "./types.js"
+import type { TaskConfig, Task } from "./types.js"
 
 /**
  * Creates a task configuration.
