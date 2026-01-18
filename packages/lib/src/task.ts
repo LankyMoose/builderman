@@ -1,6 +1,6 @@
 import { $TASK_INTERNAL } from "./constants.js"
 import { validateTasks } from "./util.js"
-import type { TaskConfig, Task } from "./types.js"
+import type { TaskConfig, Task, Commands } from "./types.js"
 
 /**
  * Creates a task configuration.
@@ -12,9 +12,24 @@ import type { TaskConfig, Task } from "./types.js"
  * await pipeline([build, deploy]).run()
  */
 export function task(config: TaskConfig): Task {
-  const { name, commands, cwd = ".", dependencies = [], env } = config
+  const { name, commands, cwd = ".", dependencies = [], env, allowSkip } = config
+  
   const dependenciesClone = [...dependencies]
   validateTasks(dependenciesClone)
+
+  const commandsClone: Commands = Object.fromEntries(
+    Object.entries(commands).map(([key, command]) => {
+      if (typeof command === "string") {
+        return [key, command]
+      }
+
+      const { run, readyWhen, readyTimeout, teardown, env } = command
+      return [
+        key,
+        { run, readyWhen, readyTimeout, teardown, env: { ...env } },
+      ]
+    })
+  )
 
   return {
     name,
@@ -23,21 +38,9 @@ export function task(config: TaskConfig): Task {
       cwd,
       dependencies: dependenciesClone,
       env: { ...env },
+      allowSkip,
       id: crypto.randomUUID(),
-      // deep clone commands to prevent external mutation
-      commands: Object.fromEntries(
-        Object.entries(commands).map(([key, command]) => {
-          if (typeof command === "string") {
-            return [key, command]
-          }
-
-          const { run, readyWhen, readyTimeout, teardown, env } = command
-          return [
-            key,
-            { run, readyWhen, readyTimeout, teardown, env: { ...env } },
-          ]
-        })
-      ),
+      commands: commandsClone,
     },
   }
 }
