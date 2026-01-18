@@ -63,17 +63,19 @@ import { task, pipeline } from "builderman"
 const build = task({
   name: "build",
   commands: { build: "tsc" },
-  cwd: ".",
+  cwd: "packages/my-package", // Optional: defaults to "."
 })
 
 const test = task({
   name: "test",
   commands: { build: "npm test" },
-  cwd: ".",
   dependencies: [build],
+  cwd: "packages/my-package",
 })
 
-const result = await pipeline([build, test]).run()
+const result = await pipeline([build, test]).run({
+  command: "build",
+})
 
 if (!result.ok) {
   console.error("Pipeline failed:", result.error.message)
@@ -94,6 +96,7 @@ A **task** represents a unit of work. Each task:
 - Defines commands for one or more modes
 - May depend on other tasks
 - May register teardown logic
+- Has an optional working directory (`cwd`, defaults to `"."`)
 
 ```ts
 import { task } from "builderman"
@@ -159,7 +162,6 @@ const apiTask = task({
       },
     },
   },
-  cwd: ".",
 })
 ```
 
@@ -172,7 +174,6 @@ const apiTask = task({
     dev: "npm run dev",
     build: "npm run build",
   },
-  cwd: ".",
   env: {
     API_URL: "http://localhost:3000",
     LOG_LEVEL: "debug",
@@ -365,7 +366,6 @@ const dbTask = task({
     },
     build: "echo build",
   },
-  cwd: ".",
 })
 ```
 
@@ -423,7 +423,6 @@ const dbTask = task({
   commands: {
     dev: "docker-compose up",
   },
-  cwd: ".",
 })
 
 const apiTask = task({
@@ -432,7 +431,6 @@ const apiTask = task({
     dev: "npm run dev",
     build: "npm run build",
   },
-  cwd: ".",
   dependencies: [dbTask],
 })
 
@@ -473,7 +471,6 @@ const dbTask = task({
   commands: {
     dev: "docker-compose up",
   },
-  cwd: ".",
   allowSkip: true,
 })
 
