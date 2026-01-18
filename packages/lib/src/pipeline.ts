@@ -167,15 +167,19 @@ export function pipeline(tasks: Task[]): Pipeline {
         if (failed) return
         failed = true
 
-        // Mark running tasks as aborted
+        // Mark running tasks as aborted (unless they're already marked as failed)
         for (const [taskId, child] of runningTasks.entries()) {
-          updateTaskStatus(taskId, {
-            status: "aborted",
-            finishedAt: Date.now(),
-          })
           const stats = taskStats.get(taskId)
-          if (stats && stats.startedAt) {
-            stats.durationMs = stats.finishedAt! - stats.startedAt
+          // Don't overwrite "failed" status - tasks that failed for specific reasons
+          // (like readyTimeout) should remain "failed", not "aborted"
+          if (stats?.status !== "failed") {
+            updateTaskStatus(taskId, {
+              status: "aborted",
+              finishedAt: Date.now(),
+            })
+            if (stats && stats.startedAt) {
+              stats.durationMs = stats.finishedAt! - stats.startedAt
+            }
           }
           try {
             child.kill("SIGTERM")

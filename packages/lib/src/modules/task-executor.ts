@@ -39,7 +39,7 @@ export function executeTask(
   // Check if signal is aborted before starting new tasks
   if (executorConfig.signal?.aborted) {
     executorConfig.failPipeline(
-      new PipelineError("Aborted", PipelineError.InvalidSignal)
+      new PipelineError("Aborted", PipelineError.Aborted)
     )
     return
   }
@@ -255,6 +255,7 @@ function executeRegularTask(
   let command: string
   let readyWhen: ((stdout: string) => boolean) | undefined
   let readyTimeout = Infinity
+  let completedTimeout = Infinity
   let teardown: string | undefined
   let commandEnv: Record<string, string> = {}
 
@@ -264,6 +265,7 @@ function executeRegularTask(
     command = commandConfig.run
     readyWhen = commandConfig.readyWhen
     readyTimeout = commandConfig.readyTimeout ?? Infinity
+    completedTimeout = commandConfig.completedTimeout ?? Infinity
     teardown = commandConfig.teardown
     commandEnv = commandConfig.env ?? {}
   }
@@ -335,6 +337,7 @@ function executeRegularTask(
 
   let didMarkReady = false
   let readyTimeoutId: NodeJS.Timeout | null = null
+  let completedTimeoutId: NodeJS.Timeout | null = null
 
   if (!readyWhen) {
     advanceScheduler({ type: "ready", taskId })
@@ -346,9 +349,21 @@ function executeRegularTask(
         const finishedAt = Date.now()
         const pipelineError = new PipelineError(
           `[${taskName}] Task did not become ready within ${readyTimeout}ms`,
-          PipelineError.TaskFailed,
+          PipelineError.TaskReadyTimeout,
           taskName
         )
+        // Clear completed timeout if it exists
+        if (completedTimeoutId) {
+          clearTimeout(completedTimeoutId)
+          completedTimeoutId = null
+        }
+        // Remove from runningTasks before calling failPipeline to prevent it from
+        // being marked as "aborted" - this task failed for a specific reason
+        runningTasks.delete(taskId)
+        // Kill the process since it didn't become ready in time
+        try {
+          child.kill("SIGTERM")
+        } catch {}
         updateTaskStatus(taskId, {
           status: "failed",
           finishedAt,
@@ -358,6 +373,38 @@ function executeRegularTask(
         failPipeline(pipelineError)
       }
     }, readyTimeout)
+  }
+
+  // Set up timeout for task completion
+  if (completedTimeout !== Infinity) {
+    completedTimeoutId = setTimeout(() => {
+      // Task didn't complete within the timeout
+      const finishedAt = Date.now()
+      const pipelineError = new PipelineError(
+        `[${taskName}] Task did not complete within ${completedTimeout}ms`,
+        PipelineError.TaskCompletedTimeout,
+        taskName
+      )
+      // Clear ready timeout if it exists (to prevent it from firing after we've already failed)
+      if (readyTimeoutId) {
+        clearTimeout(readyTimeoutId)
+        readyTimeoutId = null
+      }
+      // Remove from runningTasks before calling failPipeline to prevent it from
+      // being marked as "aborted" - this task failed for a specific reason
+      runningTasks.delete(taskId)
+      // Kill the process since it didn't complete in time
+      try {
+        child.kill("SIGTERM")
+      } catch {}
+      updateTaskStatus(taskId, {
+        status: "failed",
+        finishedAt,
+        durationMs: finishedAt - startedAt,
+        error: pipelineError,
+      })
+      failPipeline(pipelineError)
+    }, completedTimeout)
   }
 
   let output = ""
@@ -396,6 +443,11 @@ function executeRegularTask(
       clearTimeout(readyTimeoutId)
       readyTimeoutId = null
     }
+    // Clear completed timeout if it exists
+    if (completedTimeoutId) {
+      clearTimeout(completedTimeoutId)
+      completedTimeoutId = null
+    }
 
     const finishedAt = Date.now()
     const pipelineError = new PipelineError(
@@ -419,6 +471,20 @@ function executeRegularTask(
     if (readyTimeoutId) {
       clearTimeout(readyTimeoutId)
       readyTimeoutId = null
+    }
+    // Clear completed timeout if it exists
+    if (completedTimeoutId) {
+      clearTimeout(completedTimeoutId)
+      completedTimeoutId = null
+    }
+
+    // Check if task was already marked as failed (e.g., by timeout handlers)
+    // If so, don't process the exit event to avoid conflicts
+    const currentStats = executorConfig.taskStats.get(taskId)
+    if (currentStats?.status === "failed" && currentStats?.error) {
+      // Task was already failed, likely by a timeout handler
+      // Just return to avoid duplicate error handling
+      return
     }
 
     const finishedAt = Date.now()

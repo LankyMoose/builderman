@@ -673,6 +673,115 @@ describe("pipeline", () => {
     )
   })
 
+  it("fails task when readyWhen condition is not met within readyTimeout", async () => {
+    const task1 = task({
+      name: "task1",
+      commands: {
+        dev: {
+          run: "echo starting",
+          readyWhen: (output) => output.includes("READY"),
+          readyTimeout: 50,
+        },
+        build: "echo task1",
+      },
+    })
+
+    const mockSpawn = createMockSpawn({
+      commandHandler: (command, process) => {
+        if (command.includes("task1")) {
+          // Emit stdout that doesn't match ready condition
+          setImmediate(() => {
+            process.stdout?.emit("data", Buffer.from("Starting...\n"))
+          })
+          // Never emit "READY", so timeout should fire
+          // Don't emit exit - the timeout should kill it
+        }
+      },
+    })
+
+    const pipe = pipeline([task1])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+    })
+
+    assert.strictEqual(result.ok, false)
+    assert.ok(result.error)
+    assert.strictEqual(result.error.code, PipelineError.TaskReadyTimeout)
+    assert.ok(
+      result.error.message.includes("Task did not become ready within 50ms"),
+      `Error message should mention timeout. Got: ${result.error.message}`
+    )
+    assert.ok(
+      result.error.message.includes("task1"),
+      `Error message should include task name. Got: ${result.error.message}`
+    )
+
+    // Check task stats
+    const task1Stats = Object.values(result.stats.tasks).find(
+      (t) => t.name === "task1"
+    )!
+    assert.strictEqual(task1Stats.status, "failed")
+    assert.ok(task1Stats.startedAt !== undefined)
+    assert.ok(task1Stats.finishedAt !== undefined)
+    assert.ok(task1Stats.durationMs !== undefined)
+    assert.ok(task1Stats.error !== undefined)
+    assert.strictEqual(task1Stats.error?.message, result.error.message)
+  })
+
+  it("fails task when task does not complete within completedTimeout", async () => {
+    const task1 = task({
+      name: "task1",
+      commands: {
+        dev: {
+          run: "echo starting",
+          completedTimeout: 50,
+        },
+        build: "echo task1",
+      },
+    })
+
+    const mockSpawn = createMockSpawn({
+      commandHandler: (command, process) => {
+        if (command.includes("task1")) {
+          // Emit some stdout but never exit - the timeout should kill it
+          setImmediate(() => {
+            process.stdout?.emit("data", Buffer.from("Starting...\n"))
+          })
+          // Don't emit exit - the timeout should kill it and handle everything
+          // The timeout handler will remove from runningTasks and call failPipeline
+        }
+      },
+    })
+
+    const pipe = pipeline([task1])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+    })
+
+    assert.strictEqual(result.ok, false)
+    assert.ok(result.error)
+    assert.strictEqual(result.error.code, PipelineError.TaskCompletedTimeout)
+    assert.ok(
+      result.error.message.includes("Task did not complete within 50ms"),
+      `Error message should mention timeout. Got: ${result.error.message}`
+    )
+    assert.ok(
+      result.error.message.includes("task1"),
+      `Error message should include task name. Got: ${result.error.message}`
+    )
+
+    // Check task stats
+    const task1Stats = Object.values(result.stats.tasks).find(
+      (t) => t.name === "task1"
+    )!
+    assert.strictEqual(task1Stats.status, "failed")
+    assert.ok(task1Stats.startedAt !== undefined)
+    assert.ok(task1Stats.finishedAt !== undefined)
+    assert.ok(task1Stats.durationMs !== undefined)
+    assert.ok(task1Stats.error !== undefined)
+    assert.strictEqual(task1Stats.error?.message, result.error.message)
+  })
+
   it("cancels pipeline when abort signal is triggered", async () => {
     const abortController = new AbortController()
     let taskKilled = false

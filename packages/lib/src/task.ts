@@ -30,8 +30,19 @@ export function task(config: TaskConfig): Task {
         return [key, command]
       }
 
-      const { run, readyWhen, readyTimeout, teardown, env } = command
-      return [key, { run, readyWhen, readyTimeout, teardown, env: { ...env } }]
+      const { run, readyWhen, readyTimeout, completedTimeout, teardown, env } =
+        command
+      return [
+        key,
+        {
+          run,
+          readyWhen,
+          readyTimeout,
+          completedTimeout,
+          teardown,
+          env: { ...env },
+        },
+      ]
     })
   )
 

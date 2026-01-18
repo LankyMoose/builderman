@@ -306,16 +306,19 @@ if (!result.ok) {
       console.error("Pipeline was cancelled")
       break
     case PipelineError.TaskFailed:
-      console.error(`Task failed: ${result.error.message}`)
+      console.error("Task failed:", result.error.message)
+      break
+    case PipelineError.TaskReadyTimeout:
+      console.error("Task was not ready in time:", result.error.message)
+      break
+    case PipelineError.TaskCompletedTimeout:
+      console.error("Task did not complete in time:", result.error.message)
       break
     case PipelineError.ProcessTerminated:
-      console.error("Process was terminated")
+      console.error("Process terminated:", result.error.message)
       break
     case PipelineError.InvalidTask:
-      console.error(`Invalid task configuration: ${result.error.message}`)
-      break
-    case PipelineError.InvalidSignal:
-      console.error("Invalid abort signal")
+      console.error("Invalid task configuration:", result.error.message)
       break
   }
 }

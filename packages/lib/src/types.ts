@@ -23,10 +23,14 @@ export interface CommandConfig {
    */
   readyTimeout?: number
   /**
+   * Maximum time in milliseconds to wait for the command to complete.
+   * @default Infinity
+   */
+  completedTimeout?: number
+  /**
    * Optional command to run during teardown (e.g., to stop a server).
    */
   teardown?: string
-
   /**
    * Optional environment variables to set for the process spawned by this command.
    * Overrides environment variables inherited from the parent process & task config.

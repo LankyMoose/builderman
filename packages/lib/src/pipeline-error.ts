@@ -2,7 +2,8 @@ export type PipelineErrorCode =
   | typeof PipelineError.Aborted
   | typeof PipelineError.ProcessTerminated
   | typeof PipelineError.TaskFailed
-  | typeof PipelineError.InvalidSignal
+  | typeof PipelineError.TaskCompletedTimeout
+  | typeof PipelineError.TaskReadyTimeout
   | typeof PipelineError.InvalidTask
 
 export class PipelineError extends Error {
@@ -15,9 +16,10 @@ export class PipelineError extends Error {
     this.taskName = taskName
   }
 
-  static Aborted = 0 as const
-  static ProcessTerminated = 1 as const
-  static TaskFailed = 2 as const
-  static InvalidSignal = 3 as const
-  static InvalidTask = 4 as const
+  static Aborted = "aborted" as const
+  static ProcessTerminated = "process-terminated" as const
+  static TaskFailed = "task-failed" as const
+  static TaskReadyTimeout = "task-ready-timeout" as const
+  static TaskCompletedTimeout = "task-completed-timeout" as const
+  static InvalidTask = "invalid-task" as const
 }
