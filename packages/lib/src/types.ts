@@ -61,8 +61,9 @@ export interface TaskConfig {
   /**
    * Working directory for the task's commands.
    * Can be absolute or relative to the current working directory.
+   * @default "."
    */
-  cwd: string
+  cwd?: string
   /**
    * Optional array of tasks that must complete before this task can start.
    * Dependencies are executed in parallel when possible.
@@ -77,6 +78,7 @@ export interface TaskConfig {
 
 interface TaskInternal extends TaskConfig {
   id: string
+  cwd: string
   dependencies: Task[]
   pipeline?: Pipeline // If set, this task represents a nested pipeline
 }

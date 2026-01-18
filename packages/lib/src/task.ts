@@ -25,6 +25,7 @@ export function task(config: TaskConfig): Task {
           typeof value === "string" ? value : { ...value },
         ])
       ),
+      cwd: config.cwd || ".",
       dependencies: [...(config.dependencies || [])],
     },
   }

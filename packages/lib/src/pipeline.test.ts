@@ -87,12 +87,10 @@ describe("createTaskGraph", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
     })
 
     const graph = createTaskGraph([task1, task2])
@@ -106,12 +104,10 @@ describe("createTaskGraph", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
       dependencies: [task1],
     })
 
@@ -132,12 +128,10 @@ describe("createTaskGraph", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
       dependencies: [task1],
     })
 
@@ -154,12 +148,10 @@ describe("TaskGraph.validate", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
       dependencies: [task1],
     })
 
@@ -171,12 +163,10 @@ describe("TaskGraph.validate", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
       dependencies: [task1],
     })
     // Create circular dependency
@@ -190,18 +180,15 @@ describe("TaskGraph.validate", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
       dependencies: [task1],
     })
     const task3 = task({
       name: "task3",
       commands: { dev: "echo 3", build: "echo 3" },
-      cwd: ".",
       dependencies: [task2],
     })
     // Create cycle: task1 -> task2 -> task3 -> task1
@@ -221,12 +208,10 @@ describe("TaskGraph.simplify", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
       dependencies: [task1],
     })
     // task3 depends on both task1 and task2, but task2 already depends on task1
@@ -234,7 +219,6 @@ describe("TaskGraph.simplify", () => {
     const task3 = task({
       name: "task3",
       commands: { dev: "echo 3", build: "echo 3" },
-      cwd: ".",
       dependencies: [task1, task2],
     })
 
@@ -252,18 +236,15 @@ describe("TaskGraph.simplify", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
     })
     // task3 depends on both task1 and task2, but they're independent
     const task3 = task({
       name: "task3",
       commands: { dev: "echo 3", build: "echo 3" },
-      cwd: ".",
       dependencies: [task1, task2],
     })
 
@@ -283,12 +264,10 @@ describe("pipeline", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo 2", build: "echo 2" },
-      cwd: ".",
       dependencies: [task1],
     })
     // Create circular dependency
@@ -305,12 +284,10 @@ describe("pipeline", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo task1", build: "echo task1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo task2", build: "echo task2" },
-      cwd: ".",
       dependencies: [task1],
     })
 
@@ -345,7 +322,6 @@ describe("pipeline", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo task1", build: "echo task1" },
-      cwd: ".",
     })
 
     const mockSpawn = createMockSpawn({ exitCode: 1 })
@@ -382,7 +358,6 @@ describe("pipeline", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo task1", build: "echo task1" },
-      cwd: ".",
     })
 
     const mockSpawn = createMockSpawn()
@@ -420,12 +395,10 @@ describe("pipeline", () => {
         },
         build: "echo task1",
       },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo task2", build: "echo task2" },
-      cwd: ".",
       dependencies: [task1],
     })
 
@@ -490,12 +463,10 @@ describe("pipeline", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo task1", build: "echo task1" },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo task2", build: "echo task2" },
-      cwd: ".",
       dependencies: [task1],
     })
 
@@ -543,18 +514,15 @@ describe("pipeline", () => {
         },
         build: "echo task1",
       },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
       commands: { dev: "echo task2", build: "echo task2" },
-      cwd: ".",
       dependencies: [task1],
     })
     const task3 = task({
       name: "task3",
       commands: { dev: "echo task3", build: "echo task3" },
-      cwd: ".",
       dependencies: [task1],
     })
 
@@ -625,7 +593,6 @@ describe("pipeline", () => {
         },
         build: "echo task1",
       },
-      cwd: ".",
     })
     const task2 = task({
       name: "task2",
@@ -636,12 +603,10 @@ describe("pipeline", () => {
         },
         build: "echo task2",
       },
-      cwd: ".",
     })
     const task3 = task({
       name: "task3",
       commands: { dev: "echo task3", build: "echo task3" },
-      cwd: ".",
       dependencies: [task1, task2],
     })
 
@@ -715,13 +680,11 @@ describe("pipeline", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "sleep 1", build: "sleep 1" },
-      cwd: ".",
     })
 
     const task2 = task({
       name: "task2",
       commands: { dev: "sleep 1", build: "sleep 1" },
-      cwd: ".",
       dependencies: [task1], // task2 depends on task1, so it starts after task1 completes
     })
 
@@ -804,7 +767,6 @@ describe("pipeline", () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
-      cwd: ".",
     })
 
     const pipe = pipeline([task1])
@@ -836,7 +798,6 @@ describe("pipeline", () => {
           },
           build: "echo task1",
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn({
@@ -882,7 +843,6 @@ describe("pipeline", () => {
           },
           build: "echo task1",
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn({
@@ -936,7 +896,6 @@ describe("pipeline", () => {
           },
           build: "sleep 1",
         },
-        cwd: ".",
       })
 
       const mockSpawn = mock.fn((command: string) => {
@@ -996,7 +955,6 @@ describe("pipeline", () => {
           },
           // No build command - task will be skipped in production mode
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn({
@@ -1092,7 +1050,6 @@ describe("pipeline", () => {
           },
           build: "echo task1",
         },
-        cwd: ".",
       })
 
       const task2 = task({
@@ -1104,7 +1061,6 @@ describe("pipeline", () => {
           },
           build: "echo task2",
         },
-        cwd: ".",
         dependencies: [task1],
       })
 
@@ -1181,7 +1137,6 @@ describe("pipeline", () => {
           },
           build: "echo db",
         },
-        cwd: ".",
       })
 
       const api = task({
@@ -1193,7 +1148,6 @@ describe("pipeline", () => {
           },
           build: "echo api",
         },
-        cwd: ".",
         dependencies: [db], // api depends on db
       })
 
@@ -1253,7 +1207,6 @@ describe("pipeline", () => {
           dev: "echo task1",
           // No build command
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn()
@@ -1293,7 +1246,6 @@ describe("pipeline", () => {
           dev: "echo task1",
           // No build command
         },
-        cwd: ".",
       })
 
       const task2 = task({
@@ -1302,7 +1254,6 @@ describe("pipeline", () => {
           build: "echo task2",
           dev: "echo task2",
         },
-        cwd: ".",
         dependencies: [task1],
       })
 
@@ -1332,7 +1283,6 @@ describe("pipeline", () => {
           dev: "echo task1",
           // No build command
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn()
@@ -1368,7 +1318,6 @@ describe("pipeline", () => {
           dev: "echo task1",
           // No build command
         },
-        cwd: ".",
         allowSkip: true,
       })
 
@@ -1407,7 +1356,6 @@ describe("pipeline", () => {
           dev: "echo inner1",
           // No build command
         },
-        cwd: ".",
       })
 
       const innerTask2 = task({
@@ -1416,7 +1364,6 @@ describe("pipeline", () => {
           dev: "echo inner2",
           // No build command
         },
-        cwd: ".",
       })
 
       const innerPipeline = pipeline([innerTask1, innerTask2])
@@ -1459,7 +1406,6 @@ describe("pipeline", () => {
           dev: "echo inner1",
           build: "echo inner1",
         },
-        cwd: ".",
       })
 
       const innerTask2 = task({
@@ -1468,7 +1414,6 @@ describe("pipeline", () => {
           dev: "echo inner2",
           // No build command
         },
-        cwd: ".",
       })
 
       const innerPipeline = pipeline([innerTask1, innerTask2])
@@ -1511,12 +1456,10 @@ describe("pipeline <-> task conversion", () => {
     const buildTask1 = task({
       name: "build:compile",
       commands: { dev: "echo build:compile", build: "echo build:compile" },
-      cwd: ".",
     })
     const buildTask2 = task({
       name: "build:bundle",
       commands: { dev: "echo build:bundle", build: "echo build:bundle" },
-      cwd: ".",
       dependencies: [buildTask1],
     })
     const build = pipeline([buildTask1, buildTask2])
@@ -1524,14 +1467,12 @@ describe("pipeline <-> task conversion", () => {
     const testTask1 = task({
       name: "test:unit",
       commands: { dev: "echo test:unit", build: "echo test:unit" },
-      cwd: ".",
     })
     const test = pipeline([testTask1])
 
     const deployTask1 = task({
       name: "deploy:upload",
       commands: { dev: "echo deploy:upload", build: "echo deploy:upload" },
-      cwd: ".",
     })
     const deploy = pipeline([deployTask1])
 
@@ -1624,7 +1565,6 @@ describe("pipeline <-> task conversion", () => {
       task({
         name: "build",
         commands: { dev: "echo build", build: "echo build" },
-        cwd: ".",
       }),
     ])
 
@@ -1632,7 +1572,6 @@ describe("pipeline <-> task conversion", () => {
       task({
         name: "test",
         commands: { dev: "echo test", build: "echo test" },
-        cwd: ".",
       }),
     ])
 
@@ -1655,7 +1594,6 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "echo task1", build: "echo task1" },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn()
@@ -1692,7 +1630,6 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "echo task1", build: "echo task1" },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn()
@@ -1745,7 +1682,6 @@ describe("stats field validation", () => {
           },
           build: "echo task1",
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn()
@@ -1768,7 +1704,6 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "echo task1", build: "echo task1" },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn({ exitCode: 1 })
@@ -1822,7 +1757,6 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "sleep 1", build: "sleep 1" },
-        cwd: ".",
       })
 
       const mockSpawn = mock.fn((_command: string) => {
@@ -1858,12 +1792,10 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "sleep 1", build: "sleep 1" },
-        cwd: ".",
       })
       const task2 = task({
         name: "task2",
         commands: { dev: "sleep 1", build: "sleep 1" },
-        cwd: ".",
         dependencies: [task1],
       })
 
@@ -1922,7 +1854,6 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "sleep 1", build: "sleep 1" },
-        cwd: ".",
       })
 
       const mockSpawn = mock.fn((_command: string) => {
@@ -1977,7 +1908,6 @@ describe("stats field validation", () => {
           dev: "echo task1",
           // No build command
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn()
@@ -2010,7 +1940,6 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "echo task1", build: "echo task1" },
-        cwd: ".",
       })
       const task2 = task({
         name: "task2",
@@ -2018,13 +1947,11 @@ describe("stats field validation", () => {
           dev: "echo task2",
           // No build command - will be skipped
         },
-        cwd: ".",
         dependencies: [task1],
       })
       const task3 = task({
         name: "task3",
         commands: { dev: "echo task3", build: "echo task3" },
-        cwd: ".",
         dependencies: [task2],
       })
 
@@ -2077,18 +2004,15 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "echo task1", build: "echo task1" },
-        cwd: ".",
       })
       const task2 = task({
         name: "task2",
         commands: { dev: "echo task2", build: "echo task2" },
-        cwd: ".",
         dependencies: [task1],
       })
       const task3 = task({
         name: "task3",
         commands: { dev: "echo task3", build: "echo task3" },
-        cwd: ".",
         dependencies: [task1],
       })
 
@@ -2134,7 +2058,6 @@ describe("stats field validation", () => {
           },
           build: "echo task1",
         },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn({
@@ -2162,7 +2085,6 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "echo task1", build: "echo task1" },
-        cwd: ".",
       })
 
       const mockSpawn = createMockSpawn()
@@ -2179,12 +2101,10 @@ describe("stats field validation", () => {
       const task1 = task({
         name: "task1",
         commands: { dev: "echo task1", build: "echo task1" },
-        cwd: ".",
       })
       const task2 = task({
         name: "task2",
         commands: { dev: "echo task2", build: "echo task2" },
-        cwd: ".",
         dependencies: [task1],
       })
 
