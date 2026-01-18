@@ -25,9 +25,7 @@ export function createSignalHandler({
     "SIGBREAK",
   ].map((sig) => {
     const handleSignal = () => {
-      onProcessTerminated(
-        `Received ${sig}`
-      )
+      onProcessTerminated(`Received ${sig}`)
     }
     process.once(sig, handleSignal)
     return () => {
@@ -52,6 +50,5 @@ export function createSignalHandler({
       processTerminationListenerCleanups.forEach((cleanup) => cleanup())
       signalCleanup?.()
     },
-
   }
 }

@@ -12,8 +12,15 @@ import type { TaskConfig, Task, Commands } from "./types.js"
  * await pipeline([build, deploy]).run()
  */
 export function task(config: TaskConfig): Task {
-  const { name, commands, cwd = ".", dependencies = [], env, allowSkip } = config
-  
+  const {
+    name,
+    commands,
+    cwd = ".",
+    dependencies = [],
+    env,
+    allowSkip,
+  } = config
+
   const dependenciesClone = [...dependencies]
   validateTasks(dependenciesClone)
 
@@ -24,10 +31,7 @@ export function task(config: TaskConfig): Task {
       }
 
       const { run, readyWhen, readyTimeout, teardown, env } = command
-      return [
-        key,
-        { run, readyWhen, readyTimeout, teardown, env: { ...env } },
-      ]
+      return [key, { run, readyWhen, readyTimeout, teardown, env: { ...env } }]
     })
   )
 

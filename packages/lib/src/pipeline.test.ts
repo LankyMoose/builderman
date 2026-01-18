@@ -1845,7 +1845,9 @@ describe("stats field validation", () => {
       )
       assert.ok(
         affectedTasks.length > 0 || result.stats.summary.running > 0,
-        `At least one task should be affected. Summary: ${JSON.stringify(result.stats.summary)}, Task statuses: ${taskStats.map((t) => t.status).join(", ")}`
+        `At least one task should be affected. Summary: ${JSON.stringify(
+          result.stats.summary
+        )}, Task statuses: ${taskStats.map((t) => t.status).join(", ")}`
       )
     })
 

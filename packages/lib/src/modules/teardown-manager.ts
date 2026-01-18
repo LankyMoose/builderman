@@ -125,7 +125,10 @@ export function createTeardownManager(
       }
 
       // Calculate reverse topological order
-      const teardownOrder = getReverseDependencyOrder(taskIdsWithTeardown, graph)
+      const teardownOrder = getReverseDependencyOrder(
+        taskIdsWithTeardown,
+        graph
+      )
 
       // Execute teardowns sequentially in reverse dependency order
       for (const taskId of teardownOrder) {

@@ -55,7 +55,13 @@ export function executeTask(
 
   // Handle pipeline tasks
   if (nestedPipeline) {
-    executeNestedPipeline(task, taskId, taskName, nestedPipeline, executorConfig)
+    executeNestedPipeline(
+      task,
+      taskId,
+      taskName,
+      nestedPipeline,
+      executorConfig
+    )
     return
   }
 
@@ -90,7 +96,7 @@ function executeNestedPipeline(
     : 0
 
   const commandName =
-    (config?.command ?? process.env.NODE_ENV === "production") ? "build" : "dev"
+    config?.command ?? process.env.NODE_ENV === "production" ? "build" : "dev"
 
   // Mark as ready immediately (pipeline entry nodes will handle their own ready state)
   const startedAt = Date.now()
@@ -210,7 +216,7 @@ function executeRegularTask(
   const { allowSkip, commands, cwd, env: taskEnv } = task[$TASK_INTERNAL]
 
   const commandName =
-    (config?.command ?? process.env.NODE_ENV === "production") ? "build" : "dev"
+    config?.command ?? process.env.NODE_ENV === "production" ? "build" : "dev"
   const commandConfig = commands[commandName]
 
   // Check if command exists

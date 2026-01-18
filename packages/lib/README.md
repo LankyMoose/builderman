@@ -143,6 +143,7 @@ Commands may be:
 Environment variables can be provided at multiple levels, with more specific levels overriding less specific ones:
 
 **Precedence order (highest to lowest):**
+
 1. Command-level `env` (in command config)
 2. Task-level `env` (in task config)
 3. Pipeline-level `env` (in `pipeline.run()`)
@@ -197,7 +198,9 @@ const result = await pipeline([apiTask]).run({
 When converting a pipeline to a task, you can provide environment variables that will be merged with the outer pipeline's environment:
 
 ```ts
-const innerPipeline = pipeline([/* ... */])
+const innerPipeline = pipeline([
+  /* ... */
+])
 const innerTask = innerPipeline.toTask({
   name: "inner",
   env: {
