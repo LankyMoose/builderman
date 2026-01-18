@@ -16,6 +16,7 @@ It is designed for monorepos, long-running development processes, and CI/CD pipe
 > - [Core Concepts](#core-concepts)
 >   - [Tasks](#tasks)
 >   - [Commands & Modes](#commands--modes)
+>   - [Environment Variables](#environment-variables)
 >   - [Dependencies](#dependencies)
 >   - [Pipelines](#pipelines)
 >   - [Pipeline Composition](#pipeline-composition)
@@ -130,6 +131,88 @@ Commands may be:
   - `run`: the command to execute
   - `readyWhen`: a predicate that marks the task as ready
   - `teardown`: cleanup logic to run after completion
+  - `env`: environment variables specific to this command
+
+---
+
+### Environment Variables
+
+Environment variables can be provided at multiple levels, with more specific levels overriding less specific ones:
+
+**Precedence order (highest to lowest):**
+1. Command-level `env` (in command config)
+2. Task-level `env` (in task config)
+3. Pipeline-level `env` (in `pipeline.run()`)
+4. Process environment variables
+
+#### Command-Level Environment Variables
+
+```ts
+const apiTask = task({
+  name: "api",
+  commands: {
+    dev: {
+      run: "npm run dev",
+      env: {
+        PORT: "3000",
+        NODE_ENV: "development",
+      },
+    },
+  },
+  cwd: ".",
+})
+```
+
+#### Task-Level Environment Variables
+
+```ts
+const apiTask = task({
+  name: "api",
+  commands: {
+    dev: "npm run dev",
+    build: "npm run build",
+  },
+  cwd: ".",
+  env: {
+    API_URL: "http://localhost:3000",
+    LOG_LEVEL: "debug",
+  },
+})
+```
+
+#### Pipeline-Level Environment Variables
+
+```ts
+const result = await pipeline([apiTask]).run({
+  env: {
+    DATABASE_URL: "postgres://localhost/mydb",
+    REDIS_URL: "redis://localhost:6379",
+  },
+})
+```
+
+#### Nested Pipeline Environment Variables
+
+When converting a pipeline to a task, you can provide environment variables that will be merged with the outer pipeline's environment:
+
+```ts
+const innerPipeline = pipeline([/* ... */])
+const innerTask = innerPipeline.toTask({
+  name: "inner",
+  env: {
+    INNER_VAR: "inner-value",
+  },
+})
+
+const outerPipeline = pipeline([innerTask])
+const result = await outerPipeline.run({
+  env: {
+    OUTER_VAR: "outer-value",
+  },
+})
+```
+
+In this example, tasks in `innerPipeline` will receive both `INNER_VAR` and `OUTER_VAR`, with `INNER_VAR` taking precedence if there's a conflict.
 
 ---
 
@@ -187,7 +270,11 @@ const deploy = pipeline([
 ])
 
 const buildTask = build.toTask({ name: "build" })
-const testTask = test.toTask({ name: "test", dependencies: [buildTask] })
+const testTask = test.toTask({
+  name: "test",
+  dependencies: [buildTask],
+  env: { TEST_ENV: "test-value" }, // Optional: env for nested pipeline
+})
 const deployTask = deploy.toTask({ name: "deploy", dependencies: [testTask] })
 
 const ci = pipeline([buildTask, testTask, deployTask])

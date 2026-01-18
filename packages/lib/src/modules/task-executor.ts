@@ -55,7 +55,7 @@ export function executeTask(
 
   // Handle pipeline tasks
   if (nestedPipeline) {
-    executeNestedPipeline(taskId, taskName, nestedPipeline, executorConfig)
+    executeNestedPipeline(task, taskId, taskName, nestedPipeline, executorConfig)
     return
   }
 
@@ -64,6 +64,7 @@ export function executeTask(
 }
 
 function executeNestedPipeline(
+  task: Task,
   taskId: string,
   taskName: string,
   nestedPipeline: Pipeline,
@@ -111,6 +112,14 @@ function executeNestedPipeline(
 
   runningPipelines.set(taskId, { stop: stopPipeline })
 
+  // Merge environment variables: pipeline.env -> task.env (from pipeline.toTask config)
+  const taskEnv = task[$TASK_INTERNAL].env
+  const pipelineEnv = config?.env ?? {}
+  const mergedEnv = {
+    ...pipelineEnv,
+    ...taskEnv,
+  }
+
   // Run the nested pipeline with signal propagation
   nestedPipeline
     .run({
@@ -118,6 +127,7 @@ function executeNestedPipeline(
       command: config?.command,
       strict: config?.strict,
       signal: executorConfig.signal, // Pass signal to nested pipeline
+      env: mergedEnv, // Pass merged env to nested pipeline
       onTaskBegin: (nestedTaskName) => {
         if (pipelineStopped) return
         config?.onTaskBegin?.(`${taskName}:${nestedTaskName}`)
@@ -197,13 +207,14 @@ function executeRegularTask(
     updateTaskStatus,
   } = executorConfig
 
+  const { allowSkip, commands, cwd, env: taskEnv } = task[$TASK_INTERNAL]
+
   const commandName =
     (config?.command ?? process.env.NODE_ENV === "production") ? "build" : "dev"
-  const commandConfig = task[$TASK_INTERNAL].commands[commandName]
+  const commandConfig = commands[commandName]
 
   // Check if command exists
   if (commandConfig === undefined) {
-    const allowSkip = task[$TASK_INTERNAL].allowSkip ?? false
     const strict = config?.strict ?? false
 
     // If strict mode and not explicitly allowed to skip, fail
@@ -241,18 +252,21 @@ function executeRegularTask(
     return
   }
 
-  const command =
-    typeof commandConfig === "string" ? commandConfig : commandConfig.run
-  const readyWhen =
-    typeof commandConfig === "string" ? undefined : commandConfig.readyWhen
-  const readyTimeout =
-    typeof commandConfig === "string"
-      ? Infinity
-      : (commandConfig.readyTimeout ?? Infinity)
-  const teardown =
-    typeof commandConfig === "string" ? undefined : commandConfig.teardown
+  let command: string
+  let readyWhen: ((stdout: string) => boolean) | undefined
+  let readyTimeout = Infinity
+  let teardown: string | undefined
+  let commandEnv: Record<string, string> = {}
 
-  const { cwd } = task[$TASK_INTERNAL]
+  if (typeof commandConfig === "string") {
+    command = commandConfig
+  } else {
+    command = commandConfig.run
+    readyWhen = commandConfig.readyWhen
+    readyTimeout = commandConfig.readyTimeout ?? Infinity
+    teardown = commandConfig.teardown
+    commandEnv = commandConfig.env ?? {}
+  }
 
   const taskCwd = path.isAbsolute(cwd) ? cwd : path.resolve(process.cwd(), cwd)
 
@@ -282,17 +296,21 @@ function executeRegularTask(
     .filter(Boolean)
     .join(process.platform === "win32" ? ";" : ":")
 
-  const env = {
+  // Merge environment variables in order: process.env -> pipeline.env -> task.env -> command.env
+  const accumulatedEnv = {
     ...process.env,
     PATH: accumulatedPath,
     Path: accumulatedPath,
+    ...config?.env,
+    ...taskEnv,
+    ...commandEnv,
   }
 
   const child = spawnFn(command, {
     cwd: taskCwd,
     stdio: ["inherit", "pipe", "pipe"],
     shell: true,
-    env,
+    env: accumulatedEnv,
   })
 
   runningTasks.set(taskId, child)

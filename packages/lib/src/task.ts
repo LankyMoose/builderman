@@ -12,23 +12,32 @@ import type { TaskConfig, Task } from "./types.js"
  * await pipeline([build, deploy]).run()
  */
 export function task(config: TaskConfig): Task {
-  validateTasks(config.dependencies)
+  const { name, commands, cwd = ".", dependencies = [], env } = config
+  const dependenciesClone = [...dependencies]
+  validateTasks(dependenciesClone)
 
-  const taskInstance: Task = {
-    name: config.name,
+  return {
+    name,
     [$TASK_INTERNAL]: {
-      ...config,
+      name,
+      cwd,
+      dependencies: dependenciesClone,
+      env: { ...env },
       id: crypto.randomUUID(),
+      // deep clone commands to prevent external mutation
       commands: Object.fromEntries(
-        Object.entries(config.commands).map(([key, value]) => [
-          key,
-          typeof value === "string" ? value : { ...value },
-        ])
+        Object.entries(commands).map(([key, command]) => {
+          if (typeof command === "string") {
+            return [key, command]
+          }
+
+          const { run, readyWhen, readyTimeout, teardown, env } = command
+          return [
+            key,
+            { run, readyWhen, readyTimeout, teardown, env: { ...env } },
+          ]
+        })
       ),
-      cwd: config.cwd || ".",
-      dependencies: [...(config.dependencies || [])],
     },
   }
-
-  return taskInstance
 }

@@ -2136,3 +2136,227 @@ describe("stats field validation", () => {
     })
   })
 })
+
+describe("environment variables", () => {
+  it("passes env from pipeline.run() to spawned processes", async () => {
+    let capturedEnv: Record<string, string> | undefined
+
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+    })
+
+    const mockSpawn = mock.fn((_command: string, options: any) => {
+      capturedEnv = options.env
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+      })
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+      env: { TEST_VAR: "pipeline-value", ANOTHER_VAR: "another-value" },
+    })
+
+    assert.strictEqual(result.ok, true)
+    assert.ok(capturedEnv)
+    assert.strictEqual(capturedEnv.TEST_VAR, "pipeline-value")
+    assert.strictEqual(capturedEnv.ANOTHER_VAR, "another-value")
+  })
+
+  it("merges pipeline env with task env (task env overrides pipeline env)", async () => {
+    let capturedEnv: Record<string, string> | undefined
+
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+      env: { TEST_VAR: "task-value", TASK_VAR: "task-only" },
+    })
+
+    const mockSpawn = mock.fn((_command: string, options: any) => {
+      capturedEnv = options.env
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+      })
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+      env: { TEST_VAR: "pipeline-value", PIPELINE_VAR: "pipeline-only" },
+    })
+
+    assert.strictEqual(result.ok, true)
+    assert.ok(capturedEnv)
+    // Task env should override pipeline env
+    assert.strictEqual(capturedEnv.TEST_VAR, "task-value")
+    // Both should be present
+    assert.strictEqual(capturedEnv.PIPELINE_VAR, "pipeline-only")
+    assert.strictEqual(capturedEnv.TASK_VAR, "task-only")
+  })
+
+  it("merges pipeline env with command env (command env overrides task and pipeline env)", async () => {
+    let capturedEnv: Record<string, string> | undefined
+
+    const task1 = task({
+      name: "task1",
+      commands: {
+        dev: {
+          run: "echo task1",
+          env: { TEST_VAR: "command-value", COMMAND_VAR: "command-only" },
+        },
+        build: "echo task1",
+      },
+      env: { TEST_VAR: "task-value", TASK_VAR: "task-only" },
+    })
+
+    const mockSpawn = mock.fn((_command: string, options: any) => {
+      capturedEnv = options.env
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+      })
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+      env: { TEST_VAR: "pipeline-value", PIPELINE_VAR: "pipeline-only" },
+    })
+
+    assert.strictEqual(result.ok, true)
+    assert.ok(capturedEnv)
+    // Command env should override both task and pipeline env
+    assert.strictEqual(capturedEnv.TEST_VAR, "command-value")
+    // All should be present
+    assert.strictEqual(capturedEnv.PIPELINE_VAR, "pipeline-only")
+    assert.strictEqual(capturedEnv.TASK_VAR, "task-only")
+    assert.strictEqual(capturedEnv.COMMAND_VAR, "command-only")
+  })
+
+  it("passes env from pipeline.toTask() to nested pipeline", async () => {
+    let capturedEnv: Record<string, string> | undefined
+
+    const innerTask = task({
+      name: "inner",
+      commands: { dev: "echo inner", build: "echo inner" },
+    })
+
+    const innerPipeline = pipeline([innerTask])
+    const outerTask = innerPipeline.toTask({
+      name: "outer",
+      env: { NESTED_VAR: "nested-value", ANOTHER_VAR: "nested-another" },
+    })
+
+    const mockSpawn = mock.fn((_command: string, options: any) => {
+      capturedEnv = options.env
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+      })
+      return mockProcess
+    })
+
+    const outerPipeline = pipeline([outerTask])
+    const result = await outerPipeline.run({
+      spawn: mockSpawn as any,
+      env: { OUTER_VAR: "outer-value" },
+    })
+
+    assert.strictEqual(result.ok, true)
+    assert.ok(capturedEnv)
+    assert.strictEqual(capturedEnv.NESTED_VAR, "nested-value")
+    assert.strictEqual(capturedEnv.ANOTHER_VAR, "nested-another")
+    assert.strictEqual(capturedEnv.OUTER_VAR, "outer-value")
+  })
+
+  it("merges pipeline env with nested pipeline task env (nested task env overrides)", async () => {
+    let capturedEnv: Record<string, string> | undefined
+
+    const innerTask = task({
+      name: "inner",
+      commands: { dev: "echo inner", build: "echo inner" },
+    })
+
+    const innerPipeline = pipeline([innerTask])
+    const outerTask = innerPipeline.toTask({
+      name: "outer",
+      env: { SHARED_VAR: "nested-value", NESTED_ONLY: "nested-only" },
+    })
+
+    const mockSpawn = mock.fn((_command: string, options: any) => {
+      capturedEnv = options.env
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+      })
+      return mockProcess
+    })
+
+    const outerPipeline = pipeline([outerTask])
+    const result = await outerPipeline.run({
+      spawn: mockSpawn as any,
+      env: { SHARED_VAR: "outer-value", OUTER_ONLY: "outer-only" },
+    })
+
+    assert.strictEqual(result.ok, true)
+    assert.ok(capturedEnv)
+    // Nested task env should override outer pipeline env
+    assert.strictEqual(capturedEnv.SHARED_VAR, "nested-value")
+    // Both should be present
+    assert.strictEqual(capturedEnv.OUTER_ONLY, "outer-only")
+    assert.strictEqual(capturedEnv.NESTED_ONLY, "nested-only")
+  })
+
+  it("preserves process.env when no custom env is provided", async () => {
+    let capturedEnv: Record<string, string> | undefined
+
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+    })
+
+    const mockSpawn = mock.fn((_command: string, options: any) => {
+      capturedEnv = options.env
+      const mockProcess = new EventEmitter() as ChildProcess
+      mockProcess.kill = mock.fn() as any
+      mockProcess.stdout = new EventEmitter() as any
+      mockProcess.stderr = new EventEmitter() as any
+      setImmediate(() => {
+        mockProcess.emit("exit", 0)
+      })
+      return mockProcess
+    })
+
+    const pipe = pipeline([task1])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+    })
+
+    assert.strictEqual(result.ok, true)
+    assert.ok(capturedEnv)
+    // Should include process.env values
+    assert.ok(capturedEnv.PATH !== undefined || capturedEnv.Path !== undefined)
+  })
+})

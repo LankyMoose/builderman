@@ -26,6 +26,12 @@ export interface CommandConfig {
    * Optional command to run during teardown (e.g., to stop a server).
    */
   teardown?: string
+
+  /**
+   * Optional environment variables to set for the process spawned by this command.
+   * Overrides environment variables inherited from the parent process & task config.
+   */
+  env?: Record<string, string>
 }
 
 /**
@@ -74,12 +80,18 @@ export interface TaskConfig {
    * Use this to explicitly mark tasks that are intentionally mode-specific.
    */
   allowSkip?: boolean
+  /**
+   * Optional environment variables to set for the process spawned by this task.
+   * Overrides environment variables inherited from the parent process.
+   */
+  env?: Record<string, string>
 }
 
 interface TaskInternal extends TaskConfig {
   id: string
   cwd: string
   dependencies: Task[]
+  env: Record<string, string>
   pipeline?: Pipeline // If set, this task represents a nested pipeline
 }
 
@@ -108,6 +120,12 @@ export interface PipelineRunConfig {
    * @default process.env.NODE_ENV === "production" ? "build" : "dev"
    */
   command?: string
+
+  /**
+   * Optional environment variables to set for processes spawned by this pipeline.
+   * Overrides environment variables inherited from the parent process.
+   */
+  env?: Record<string, string>
   /**
    * Provides a custom abort signal for the pipeline.
    * Aborting the signal will cause the pipeline to fail.
@@ -166,6 +184,12 @@ export interface PipelineTaskConfig {
    * Optional array of tasks that must complete before this pipeline task can start.
    */
   dependencies?: Task[]
+
+  /**
+   * Optional environment variables to set for the process spawned by this pipeline task.
+   * Overrides environment variables inherited from the parent process.
+   */
+  env?: Record<string, string>
 }
 
 /**

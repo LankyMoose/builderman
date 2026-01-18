@@ -39,12 +39,12 @@ export function pipeline(tasks: Task[]): Pipeline {
   graph.simplify()
 
   const pipelineImpl: Pipeline = {
-    toTask({ name, dependencies }: PipelineTaskConfig): Task {
+    toTask({ name, dependencies, env }: PipelineTaskConfig): Task {
       const syntheticTask = task({
         name,
         commands: {},
-        cwd: ".",
         dependencies,
+        env,
       })
 
       // Mark this task as a pipeline task so it can be detected by the executor
