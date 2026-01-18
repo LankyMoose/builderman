@@ -2,8 +2,7 @@ import { type ChildProcess } from "node:child_process"
 import * as path from "node:path"
 import * as fs from "node:fs"
 
-import { $TASK_INTERNAL } from "../constants.js"
-import { createTaskGraph } from "../graph.js"
+import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "../constants.js"
 import { PipelineError } from "../pipeline-error.js"
 
 import type {
@@ -24,7 +23,6 @@ export interface TaskExecutorConfig {
   runningTasks: Map<string, ChildProcess>
   runningPipelines: Map<string, { stop: () => void }>
   teardownManager: TeardownManager
-  pipelineTasksCache: WeakMap<Pipeline, Task[]>
   failPipeline: (error: PipelineError) => Promise<void>
   advanceScheduler: (input?: SchedulerInput) => void
   updateTaskStatus: (taskId: string, updates: Partial<TaskStats>) => void
@@ -79,7 +77,6 @@ function executeNestedPipeline(
   const {
     config,
     runningPipelines,
-    pipelineTasksCache,
     failPipeline,
     advanceScheduler,
     updateTaskStatus,
@@ -90,10 +87,7 @@ function executeNestedPipeline(
   let nestedCompletedCount = 0
 
   // Get total tasks from nested pipeline
-  const nestedTasks = pipelineTasksCache.get(nestedPipeline)
-  const nestedTotalTasks = nestedTasks
-    ? createTaskGraph(nestedTasks).nodes.size
-    : 0
+  const nestedTotalTasks = nestedPipeline[$PIPELINE_INTERNAL].graph.nodes.size
 
   const commandName =
     config?.command ?? process.env.NODE_ENV === "production" ? "build" : "dev"

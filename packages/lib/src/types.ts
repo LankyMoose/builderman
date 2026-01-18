@@ -1,5 +1,5 @@
-import type { $TASK_INTERNAL } from "./constants.js"
-import { PipelineError } from "./pipeline-error.js"
+import type { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
+import type { PipelineError } from "./pipeline-error.js"
 
 /**
  * Configuration for a command to be executed as part of a task.
@@ -192,6 +192,11 @@ export interface PipelineTaskConfig {
   env?: Record<string, string>
 }
 
+interface PipelineInternal {
+  tasks: Task[]
+  graph: TaskGraph
+}
+
 /**
  * A pipeline manages the execution of tasks with dependency-based coordination.
  * Pipelines are created using the `pipeline()` function.
@@ -213,6 +218,11 @@ export interface Pipeline {
    * @returns A task that represents this pipeline.
    */
   toTask(config: PipelineTaskConfig): Task
+  /**
+   * Internal pipeline data. This property is for internal use only.
+   * @internal
+   */
+  [$PIPELINE_INTERNAL]: PipelineInternal
 }
 
 export interface TaskNode {

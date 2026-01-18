@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process"
 
-import { $TASK_INTERNAL } from "./constants.js"
+import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
 import { createTaskGraph } from "./graph.js"
 import { PipelineError } from "./pipeline-error.js"
 import { createScheduler, type SchedulerInput } from "./scheduler.js"
@@ -17,9 +17,6 @@ import type {
   PipelineStats,
   TaskStats,
 } from "./types.js"
-
-// Store tasks for each pipeline (for nested pipeline skip tracking)
-const pipelineTasksCache = new WeakMap<Pipeline, Task[]>()
 
 /**
  * Creates a pipeline that manages task execution with dependency-based coordination.
@@ -39,6 +36,11 @@ export function pipeline(tasks: Task[]): Pipeline {
   graph.simplify()
 
   const pipelineImpl: Pipeline = {
+    [$PIPELINE_INTERNAL]: {
+      tasks: tasksClone,
+      graph,
+    },
+
     toTask({ name, dependencies, env }: PipelineTaskConfig): Task {
       const syntheticTask = task({
         name,
@@ -208,7 +210,6 @@ export function pipeline(tasks: Task[]): Pipeline {
           runningTasks,
           runningPipelines,
           teardownManager,
-          pipelineTasksCache,
           failPipeline,
           advanceScheduler,
           updateTaskStatus,
@@ -253,9 +254,6 @@ export function pipeline(tasks: Task[]): Pipeline {
       return buildResult(error, startedAt, command, taskStats, status)
     },
   }
-
-  // Store tasks for nested pipeline skip tracking
-  pipelineTasksCache.set(pipelineImpl, tasksClone)
 
   return pipelineImpl
 }
