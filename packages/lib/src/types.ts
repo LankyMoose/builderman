@@ -365,6 +365,12 @@ export interface TaskStats {
    * These tasks cannot start until this task completes.
    */
   dependents: string[]
+  /**
+   * Statistics for nested tasks when this task represents a pipeline
+   * (created via pipeline.toTask()). Only present for pipeline-tasks.
+   * Maps task ID to task statistics for all tasks within the nested pipeline.
+   */
+  subtasks?: Record<string, TaskStats>
 }
 
 /**

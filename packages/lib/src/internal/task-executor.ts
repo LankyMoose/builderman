@@ -173,15 +173,21 @@ function executeNestedPipeline(
       if (!result.ok) {
         // Nested pipeline failed
         const finishedAt = Date.now()
+        // Capture nested pipeline task stats even on failure
+        const nestedTaskStats = result.stats.tasks
         context.updateTaskStatus(taskId, {
           status: "failed",
           finishedAt,
           durationMs: finishedAt - startedAt,
           error: result.error,
+          subtasks: nestedTaskStats,
         })
         callbacks.onTaskFailed(taskId, result.error)
         return
       }
+
+      // Capture nested pipeline task stats for subtasks field
+      const nestedTaskStats = result.stats.tasks
 
       // Determine nested pipeline result based on skip behavior:
       // - If all inner tasks are skipped → outer task is skipped
@@ -194,6 +200,7 @@ function executeNestedPipeline(
           status: "skipped",
           finishedAt,
           durationMs: finishedAt - startedAt,
+          subtasks: nestedTaskStats,
         })
         config?.onTaskSkipped?.(taskName, taskId, commandName)
         setImmediate(() => {
@@ -206,6 +213,7 @@ function executeNestedPipeline(
           status: "completed",
           finishedAt,
           durationMs: finishedAt - startedAt,
+          subtasks: nestedTaskStats,
         })
         config?.onTaskComplete?.(taskName, taskId)
         // Mark as complete - this will update dependent tasks and allow them to start

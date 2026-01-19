@@ -171,6 +171,60 @@ describe("pipeline <-> task conversion", () => {
     )
   })
 
+  it("includes subtasks statistics for pipeline-tasks", async () => {
+    const inner1 = task({
+      name: "inner-1",
+      commands: { dev: "echo inner-1", build: "echo inner-1" },
+    })
+
+    const inner2 = task({
+      name: "inner-2",
+      commands: { dev: "echo inner-2", build: "echo inner-2" },
+      dependencies: [inner1],
+    })
+
+    const nested = pipeline([inner1, inner2]).toTask({ name: "nested" })
+
+    const mockSpawn = createMockSpawn()
+
+    const result = await pipeline([nested]).run({
+      spawn: mockSpawn as any,
+    })
+
+    assert.strictEqual(result.ok, true)
+    assert.strictEqual(result.stats.status, "success")
+
+    // Find the nested task stats
+    const nestedTaskStats = Object.values(result.stats.tasks).find(
+      (t) => t.name === "nested"
+    )
+    assert.ok(nestedTaskStats, "nested task should exist in stats")
+    assert.ok(nestedTaskStats.subtasks, "nested task should have subtasks")
+
+    // Verify subtasks contain both inner tasks
+    const subtaskNames = Object.values(nestedTaskStats.subtasks!).map(
+      (t) => t.name
+    )
+    assert.ok(
+      subtaskNames.includes("inner-1"),
+      "subtasks should include inner-1"
+    )
+    assert.ok(
+      subtaskNames.includes("inner-2"),
+      "subtasks should include inner-2"
+    )
+
+    // Verify subtask stats are complete
+    const inner1Subtask = Object.values(nestedTaskStats.subtasks!).find(
+      (t) => t.name === "inner-1"
+    )
+    assert.ok(inner1Subtask, "inner-1 subtask should exist")
+    assert.strictEqual(inner1Subtask.status, "completed")
+    assert.ok(inner1Subtask.startedAt, "inner-1 should have startedAt")
+    assert.ok(inner1Subtask.finishedAt, "inner-1 should have finishedAt")
+    assert.ok(inner1Subtask.durationMs !== undefined, "inner-1 should have durationMs")
+  })
+
   it("throws error when using unconverted pipeline as dependency", () => {
     const build = pipeline([
       task({
