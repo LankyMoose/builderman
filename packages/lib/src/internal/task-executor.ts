@@ -3,7 +3,7 @@ import * as fs from "node:fs"
 
 import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
 import { PipelineError } from "../errors.js"
-import { parseCommandLine } from "./util.js"
+import { parseCommandLine, resolveExecutable } from "./util.js"
 
 import type { Task, Pipeline } from "../types.js"
 import type { ExecutionContext } from "./execution-context.js"
@@ -324,6 +324,15 @@ function executeRegularTask(
     return
   }
 
+  // Merge environment variables in order: process.env -> pipeline.env -> task.env -> command.env
+  const accumulatedEnv = {
+    ...process.env,
+    // We'll compute PATH/Path below once we've built the accumulatedPath string
+    ...config?.env,
+    ...taskEnv,
+    ...commandEnv,
+  }
+
   const accumulatedPath = [
     path.join(taskCwd, "node_modules", ".bin"),
     path.join(process.cwd(), "node_modules", ".bin"),
@@ -332,17 +341,37 @@ function executeRegularTask(
     .filter(Boolean)
     .join(process.platform === "win32" ? ";" : ":")
 
-  // Merge environment variables in order: process.env -> pipeline.env -> task.env -> command.env
-  const accumulatedEnv = {
-    ...process.env,
-    PATH: accumulatedPath,
-    Path: accumulatedPath,
-    ...config?.env,
-    ...taskEnv,
-    ...commandEnv,
+  // Ensure PATH is set consistently (Windows is case-insensitive)
+  accumulatedEnv.PATH = accumulatedPath
+  accumulatedEnv.Path = accumulatedPath
+
+  let finalCmd: string
+  let finalArgs: string[]
+
+  if (process.platform === "win32" && !cmd.includes("\\") && !cmd.includes("/")) {
+    // On Windows, for bare commands like "pnpm" we delegate resolution to cmd.exe
+    // so that PATHEXT and other shell semantics are respected. This closely matches
+    // Node's spawn behavior when using shell: true, but keeps a consistent API.
+    finalCmd = process.env.ComSpec || "cmd.exe"
+    finalArgs = ["/d", "/s", "/c", commandString]
+  } else {
+    // Resolve executable from PATH (needed when shell: false)
+    const { cmd: resolvedCmd, needsCmdWrapper } = resolveExecutable(
+      cmd,
+      accumulatedPath
+    )
+
+    finalCmd = resolvedCmd
+    finalArgs = args
+
+    // On Windows, .cmd and .bat files need to be run via cmd.exe when shell: false
+    if (needsCmdWrapper) {
+      finalCmd = process.env.ComSpec || "cmd.exe"
+      finalArgs = ["/c", resolvedCmd, ...args]
+    }
   }
 
-  const child = spawnFn(cmd, args, {
+  const child = spawnFn(finalCmd, finalArgs, {
     cwd: taskCwd,
     stdio: ["inherit", "pipe", "pipe"],
     shell: false,
