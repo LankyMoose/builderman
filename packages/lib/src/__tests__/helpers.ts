@@ -13,33 +13,37 @@ export function createMockSpawn(options?: {
   // Default behavior for all commands
   exitCode?: number | null
   // Command-specific handlers (checked in order)
+  // Match against the command string (cmd) or full command line
   commands?: Array<{
-    match: string | RegExp | ((command: string) => boolean)
+    match: string | RegExp | ((cmd: string, args: string[]) => boolean)
     handler: CommandHandler
   }>
   // Fallback handler for unmatched commands
-  commandHandler?: (command: string, process: ChildProcess) => void
+  commandHandler?: (cmd: string, args: string[], process: ChildProcess) => void
 }): ReturnType<typeof mock.fn> {
-  return mock.fn((command: string) => {
+  return mock.fn((cmd: string, args: string[] = [], _spawnOptions?: any) => {
     const mockProcess = new EventEmitter() as ChildProcess
     mockProcess.kill = mock.fn() as any
     mockProcess.stdout = new EventEmitter() as any
     mockProcess.stderr = new EventEmitter() as any
 
+    // Reconstruct command string for matching (for backwards compatibility)
+    const commandString = [cmd, ...args].join(" ")
+
     // Find matching command handler
     let matchedHandler: CommandHandler | undefined
     if (options?.commands) {
-      for (const cmd of options.commands) {
+      for (const cmdConfig of options.commands) {
         let matches = false
-        if (typeof cmd.match === "string") {
-          matches = command.includes(cmd.match)
-        } else if (cmd.match instanceof RegExp) {
-          matches = cmd.match.test(command)
+        if (typeof cmdConfig.match === "string") {
+          matches = commandString.includes(cmdConfig.match) || cmd.includes(cmdConfig.match)
+        } else if (cmdConfig.match instanceof RegExp) {
+          matches = cmdConfig.match.test(commandString) || cmdConfig.match.test(cmd)
         } else {
-          matches = cmd.match(command)
+          matches = cmdConfig.match(cmd, args)
         }
         if (matches) {
-          matchedHandler = cmd.handler
+          matchedHandler = cmdConfig.handler
           break
         }
       }
@@ -55,7 +59,7 @@ export function createMockSpawn(options?: {
 
     // Fallback commandHandler
     if (!matchedHandler && options?.commandHandler) {
-      options.commandHandler(command, mockProcess)
+      options.commandHandler(cmd, args, mockProcess)
       // When commandHandler is used, it handles exit, so don't auto-exit
       return mockProcess
     }

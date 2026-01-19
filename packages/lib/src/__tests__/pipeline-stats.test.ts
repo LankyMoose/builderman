@@ -179,7 +179,7 @@ describe("stats field validation", () => {
         commands: { dev: "sleep 1", build: "sleep 1" },
       })
 
-      const mockSpawn = mock.fn((_command: string) => {
+      const mockSpawn = mock.fn((_cmd: string, _args: string[] = []) => {
         const mockProcess = new EventEmitter() as ChildProcess
         mockProcess.kill = mock.fn() as any
         mockProcess.stdout = new EventEmitter() as any
@@ -219,7 +219,7 @@ describe("stats field validation", () => {
         dependencies: [task1],
       })
 
-      const mockSpawn = mock.fn((_command: string) => {
+      const mockSpawn = mock.fn((_cmd: string, _args: string[] = []) => {
         const mockProcess = new EventEmitter() as ChildProcess
         mockProcess.kill = mock.fn() as any
         mockProcess.stdout = new EventEmitter() as any
@@ -278,7 +278,7 @@ describe("stats field validation", () => {
         commands: { dev: "sleep 1", build: "sleep 1" },
       })
 
-      const mockSpawn = mock.fn((_command: string) => {
+      const mockSpawn = mock.fn((_cmd: string, _args: string[] = []) => {
         const mockProcess = new EventEmitter() as ChildProcess
         mockProcess.kill = mock.fn() as any
         mockProcess.stdout = new EventEmitter() as any

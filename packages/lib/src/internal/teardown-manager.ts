@@ -1,7 +1,8 @@
 import type { TaskGraph } from "../types.js"
 
 export interface TeardownCommand {
-  command: string
+  cmd: string
+  args: string[]
   cwd: string
   taskName: string
 }
@@ -50,10 +51,10 @@ export function createTeardownManager(
 
     return new Promise<void>((resolve) => {
       try {
-        const teardownProcess = config.spawn(teardown.command, {
+        const teardownProcess = config.spawn(teardown.cmd, teardown.args, {
           cwd: teardown.cwd,
           stdio: "inherit",
-          shell: true,
+          shell: false,
         })
 
         let resolved = false
@@ -80,7 +81,11 @@ export function createTeardownManager(
                 code ?? 1
               }`
             )
-            config.onTaskTeardownError?.(teardown.taskName, taskId, teardownError)
+            config.onTaskTeardownError?.(
+              teardown.taskName,
+              taskId,
+              teardownError
+            )
             config.updateTaskTeardownStatus(taskId, "failed", teardownError)
           } else {
             config.updateTaskTeardownStatus(taskId, "completed")

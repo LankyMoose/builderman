@@ -16,8 +16,8 @@ describe("environment variables", () => {
       commands: { dev: "echo task1", build: "echo task1" },
     })
 
-    const mockSpawn = mock.fn((_command: string, options: any) => {
-      capturedEnv = options.env
+    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
+      capturedEnv = options?.env
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
@@ -49,8 +49,8 @@ describe("environment variables", () => {
       env: { TEST_VAR: "task-value", TASK_VAR: "task-only" },
     })
 
-    const mockSpawn = mock.fn((_command: string, options: any) => {
-      capturedEnv = options.env
+    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
+      capturedEnv = options?.env
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
@@ -91,8 +91,8 @@ describe("environment variables", () => {
       env: { TEST_VAR: "task-value", TASK_VAR: "task-only" },
     })
 
-    const mockSpawn = mock.fn((_command: string, options: any) => {
-      capturedEnv = options.env
+    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
+      capturedEnv = options?.env
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
@@ -133,8 +133,8 @@ describe("environment variables", () => {
       env: { NESTED_VAR: "nested-value", ANOTHER_VAR: "nested-another" },
     })
 
-    const mockSpawn = mock.fn((_command: string, options: any) => {
-      capturedEnv = options.env
+    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
+      capturedEnv = options?.env
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
@@ -186,8 +186,8 @@ describe("environment variables", () => {
     const parent = pipeline([nestedTask])
 
     const mockSpawn = createMockSpawn({
-      commandHandler: (command: string, process: ChildProcess) => {
-        executedCommands.push(command)
+      commandHandler: (cmd: string, args: string[], process: ChildProcess) => {
+        executedCommands.push([cmd, ...args].join(" "))
         // Emit exit event so the process completes
         setImmediate(() => {
           process.emit("exit", 0)
@@ -254,8 +254,8 @@ describe("environment variables", () => {
       env: { SHARED_VAR: "nested-value", NESTED_ONLY: "nested-only" },
     })
 
-    const mockSpawn = mock.fn((_command: string, options: any) => {
-      capturedEnv = options.env
+    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
+      capturedEnv = options?.env
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
@@ -289,8 +289,8 @@ describe("environment variables", () => {
       commands: { dev: "echo task1", build: "echo task1" },
     })
 
-    const mockSpawn = mock.fn((_command: string, options: any) => {
-      capturedEnv = options.env
+    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
+      capturedEnv = options?.env
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any

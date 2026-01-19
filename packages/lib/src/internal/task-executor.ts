@@ -3,6 +3,7 @@ import * as fs from "node:fs"
 
 import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
 import { PipelineError } from "../errors.js"
+import { parseCommandLine } from "./util.js"
 
 import type { Task, Pipeline } from "../types.js"
 import type { ExecutionContext } from "./execution-context.js"
@@ -282,7 +283,7 @@ function executeRegularTask(
     return
   }
 
-  let command: string
+  let commandString: string
   let readyWhen: ((stdout: string) => boolean) | undefined
   let readyTimeout = Infinity
   let completedTimeout = Infinity
@@ -290,15 +291,18 @@ function executeRegularTask(
   let commandEnv: Record<string, string> = {}
 
   if (typeof commandConfig === "string") {
-    command = commandConfig
+    commandString = commandConfig
   } else {
-    command = commandConfig.run
+    commandString = commandConfig.run
     readyWhen = commandConfig.readyWhen
     readyTimeout = commandConfig.readyTimeout ?? Infinity
     completedTimeout = commandConfig.completedTimeout ?? Infinity
     teardown = commandConfig.teardown
     commandEnv = commandConfig.env ?? {}
   }
+
+  // Parse commandSpec into cmd + args
+  const { cmd, args } = parseCommandLine(commandString)
 
   const taskCwd = path.isAbsolute(cwd) ? cwd : path.resolve(process.cwd(), cwd)
 
@@ -338,10 +342,10 @@ function executeRegularTask(
     ...commandEnv,
   }
 
-  const child = spawnFn(command, {
+  const child = spawnFn(cmd, args, {
     cwd: taskCwd,
     stdio: ["inherit", "pipe", "pipe"],
-    shell: true,
+    shell: false,
     env: accumulatedEnv,
   })
 
@@ -360,8 +364,10 @@ function executeRegularTask(
 
   // Store teardown command if provided
   if (teardown) {
+    const teardownSpec = parseCommandLine(teardown)
     teardownManager.register(taskId, {
-      command: teardown,
+      cmd: teardownSpec.cmd,
+      args: teardownSpec.args,
       cwd: taskCwd,
       taskName,
     })

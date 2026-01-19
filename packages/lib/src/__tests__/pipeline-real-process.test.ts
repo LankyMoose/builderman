@@ -12,9 +12,7 @@ const __dirname = path.dirname(__filename)
 const scriptsDir = path.resolve(__dirname, "scripts")
 
 const nodeCommand = (scriptName: string): string =>
-  `${JSON.stringify(process.execPath)} ${JSON.stringify(
-    path.join(scriptsDir, scriptName)
-  )}`
+  `${process.execPath} ${path.join(scriptsDir, scriptName)}`
 
 describe("pipeline (real processes)", () => {
   it("runs a real script successfully", async () => {
@@ -28,6 +26,10 @@ describe("pipeline (real processes)", () => {
 
     const result = await pipeline([successTask]).run({ command: "dev" })
 
+    if (!result.ok) {
+      // Helpful when debugging real-process behavior
+      console.error("success-script error", result.error)
+    }
     assert.strictEqual(result.ok, true)
     assert.strictEqual(result.stats.status, "success")
     const taskStats = result.stats.tasks[0]
@@ -46,6 +48,9 @@ describe("pipeline (real processes)", () => {
 
     const result = await pipeline([failureTask]).run({ command: "dev" })
 
+    if (result.ok) {
+      console.error("failure-script unexpectedly succeeded", result.stats)
+    }
     assert.strictEqual(result.ok, false)
     assert.ok(result.error)
     assert.strictEqual(result.error.code, PipelineError.TaskFailed)
@@ -94,5 +99,45 @@ describe("pipeline (real processes)", () => {
       "ready:ready-script",
       "begin:after-ready",
     ])
+  })
+
+  it("aborts a real long-running script when the AbortSignal is triggered", async () => {
+    const abortController = new AbortController()
+
+    const longRunningTask = task({
+      name: "long-running-script",
+      commands: {
+        dev: nodeCommand("long-running.js"),
+        build: nodeCommand("long-running.js"),
+      },
+    })
+
+    const result = await pipeline([longRunningTask]).run({
+      command: "dev",
+      signal: abortController.signal,
+      // Abort shortly after the task starts (give it a moment to spawn)
+      onTaskBegin: (name) => {
+        if (name === "long-running-script") {
+          setTimeout(() => {
+            console.log("ABORTING LONG-RUNNING SCRIPT")
+            abortController.abort()
+          }, 250)
+        }
+      },
+    })
+
+    assert.strictEqual(result.ok, false)
+    assert.ok(result.error)
+    assert.strictEqual(result.error.code, PipelineError.Aborted)
+    assert.strictEqual(result.stats.status, "aborted")
+
+    const taskStats = result.stats.tasks[0]
+    // Task should have started and then been aborted/failed due to cancellation
+    assert.ok(
+      taskStats.status === "aborted" || taskStats.status === "failed",
+      `Expected aborted or failed status, got ${taskStats.status}`
+    )
+    assert.ok(taskStats.startedAt !== undefined)
+    assert.ok(taskStats.finishedAt !== undefined)
   })
 })

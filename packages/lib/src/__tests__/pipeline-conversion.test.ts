@@ -126,21 +126,22 @@ describe("pipeline <-> task conversion", () => {
     const controller = new AbortController()
 
     const mockSpawn = createMockSpawn({
-      commandHandler: (command, proc) => {
-        if (command.includes("inner-1")) {
+      commandHandler: (cmd, args, proc) => {
+        const commandString = [cmd, ...args].join(" ")
+        if (commandString.includes("inner-1")) {
           // Simulate a watch process that becomes ready but never exits
           setImmediate(() => {
             proc.stdout?.emit("data", Buffer.from("INNER_1_READY\n"))
           })
           return
         }
-        if (command.includes("inner-2")) {
+        if (commandString.includes("inner-2")) {
           setImmediate(() => {
             proc.stdout?.emit("data", Buffer.from("INNER_2_READY\n"))
           })
           return
         }
-        if (command.includes("dependent")) {
+        if (commandString.includes("dependent")) {
           // As soon as the dependent starts, abort the run so the test doesn't hang
           setImmediate(() => {
             controller.abort()
@@ -195,9 +196,7 @@ describe("pipeline <-> task conversion", () => {
     assert.strictEqual(result.stats.status, "success")
 
     // Find the nested task stats
-    const nestedTaskStats = result.stats.tasks.find(
-      (t) => t.name === "nested"
-    )
+    const nestedTaskStats = result.stats.tasks.find((t) => t.name === "nested")
     assert.ok(nestedTaskStats, "nested task should exist in stats")
     assert.ok(nestedTaskStats.subtasks, "nested task should have subtasks")
 
@@ -220,7 +219,10 @@ describe("pipeline <-> task conversion", () => {
     assert.strictEqual(inner1Subtask.status, "completed")
     assert.ok(inner1Subtask.startedAt, "inner-1 should have startedAt")
     assert.ok(inner1Subtask.finishedAt, "inner-1 should have finishedAt")
-    assert.ok(inner1Subtask.durationMs !== undefined, "inner-1 should have durationMs")
+    assert.ok(
+      inner1Subtask.durationMs !== undefined,
+      "inner-1 should have durationMs"
+    )
   })
 
   it("throws error when using unconverted pipeline as dependency", () => {

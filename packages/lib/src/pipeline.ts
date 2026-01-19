@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process"
-import { platform } from "node:os"
 
 import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./internal/constants.js"
 import { createTaskGraph } from "./internal/graph.js"
@@ -225,62 +224,18 @@ export function pipeline(tasks: Task[]): Pipeline {
         return failed || queueManager.hasFailed()
       }
 
-      // Helper to safely kill a process (ignores errors if process is already dead)
-      // On Windows with shell:true, we need to kill the entire process tree
+      // Helper to safely kill a process (ignores errors if process is already dead).
+      // With shell:false and direct child processes, a single SIGTERM is usually enough;
+      // we avoid force-killing from the outside so the child has a chance to run its
+      // own signal handlers and exit cleanly.
       const safeKillProcess = (
         process?: import("node:child_process").ChildProcess
       ): void => {
         if (!process) return
 
         try {
-          // Always try to kill the process directly first (works for mocks and real processes)
-          // This is important for tests where mock processes might not have a pid
-          try {
-            process.kill("SIGTERM")
-          } catch {
-            // If SIGTERM fails, try SIGKILL
-            try {
-              process.kill("SIGKILL")
-            } catch {
-              // Process might already be dead, ignore
-            }
-          }
-
-          // For real processes on Windows/Unix with a valid PID, also try to kill the process tree
-          // This is important when using shell:true because child processes might not be killed
-          // We do this in addition to the direct kill above, not instead of it
-          if (process.pid) {
-            if (platform() === "win32") {
-              // Use taskkill to kill the process tree
-              const taskkill = spawn("taskkill", [
-                "/PID",
-                process.pid.toString(),
-                "/T", // Kill child processes
-                "/F", // Force kill
-              ])
-              // Suppress stdout/stderr from taskkill
-              taskkill.stdout?.on("data", () => {})
-              taskkill.stderr?.on("data", () => {})
-              // Don't wait for taskkill - it's fire and forget
-              taskkill.on("error", () => {
-                // Ignore errors - we already tried direct kill above
-              })
-            } else {
-              // On Unix-like systems, use pkill to kill the process tree
-              const pkill = spawn("pkill", [
-                "-P", // Kill all child processes of this PID
-                process.pid.toString(),
-                "-TERM", // Send SIGTERM first (graceful)
-              ])
-              // Suppress stdout/stderr from pkill
-              pkill.stdout?.on("data", () => {})
-              pkill.stderr?.on("data", () => {})
-              // Don't wait for pkill - it's fire and forget
-              pkill.on("error", () => {
-                // Ignore errors - we already tried direct kill above
-              })
-            }
-          }
+          // Try a graceful SIGTERM and let the child handle it.
+          process.kill("SIGTERM")
         } catch {
           // Process might already be dead, ignore
         }

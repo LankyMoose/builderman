@@ -153,8 +153,9 @@ describe("pipeline", () => {
     })
 
     const mockSpawn = createMockSpawn({
-      commandHandler: (command, process) => {
-        if (command.includes("task1")) {
+      commandHandler: (cmd, args, process) => {
+        const commandString = [cmd, ...args].join(" ")
+        if (commandString.includes("task1")) {
           // Emit stdout that doesn't match ready condition
           setImmediate(() => {
             process.stdout?.emit("data", Buffer.from("Starting...\n"))
@@ -169,7 +170,7 @@ describe("pipeline", () => {
           setTimeout(() => {
             process.emit("exit", 0)
           }, 20)
-        } else if (command.includes("task2")) {
+        } else if (commandString.includes("task2")) {
           setImmediate(() => {
             process.emit("exit", 0)
           })
@@ -305,13 +306,14 @@ describe("pipeline", () => {
       dependencies: [task1],
     })
 
-    const mockSpawn = mock.fn((command: string) => {
+    const mockSpawn = mock.fn((cmd: string, args: string[] = []) => {
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
       mockProcess.stderr = new EventEmitter() as any
 
-      if (command.includes("task1")) {
+      const commandString = [cmd, ...args].join(" ")
+      if (commandString.includes("task1")) {
         setTimeout(() => {
           executionOrder.push("task1:before-ready")
           mockProcess.stdout?.emit("data", Buffer.from("READY\n"))
@@ -320,11 +322,11 @@ describe("pipeline", () => {
         setTimeout(() => {
           mockProcess.emit("exit", 0)
         }, 20)
-      } else if (command.includes("task2")) {
+      } else if (commandString.includes("task2")) {
         setImmediate(() => {
           mockProcess.emit("exit", 0)
         })
-      } else if (command.includes("task3")) {
+      } else if (commandString.includes("task3")) {
         setImmediate(() => {
           mockProcess.emit("exit", 0)
         })
@@ -389,13 +391,14 @@ describe("pipeline", () => {
       dependencies: [task1, task2],
     })
 
-    const mockSpawn = mock.fn((command: string) => {
+    const mockSpawn = mock.fn((cmd: string, args: string[] = []) => {
       const mockProcess = new EventEmitter() as ChildProcess
       mockProcess.kill = mock.fn() as any
       mockProcess.stdout = new EventEmitter() as any
       mockProcess.stderr = new EventEmitter() as any
 
-      if (command.includes("task1")) {
+      const commandString = [cmd, ...args].join(" ")
+      if (commandString.includes("task1")) {
         setTimeout(() => {
           executionOrder.push("task1:before-ready")
           mockProcess.stdout?.emit("data", Buffer.from("TASK1_READY\n"))
@@ -404,7 +407,7 @@ describe("pipeline", () => {
         setTimeout(() => {
           mockProcess.emit("exit", 0)
         }, 30)
-      } else if (command.includes("task2")) {
+      } else if (commandString.includes("task2")) {
         setTimeout(() => {
           executionOrder.push("task2:before-ready")
           mockProcess.stdout?.emit("data", Buffer.from("TASK2_READY\n"))
@@ -413,7 +416,7 @@ describe("pipeline", () => {
         setTimeout(() => {
           mockProcess.emit("exit", 0)
         }, 40)
-      } else if (command.includes("task3")) {
+      } else if (commandString.includes("task3")) {
         setImmediate(() => {
           mockProcess.emit("exit", 0)
         })
@@ -466,8 +469,9 @@ describe("pipeline", () => {
     })
 
     const mockSpawn = createMockSpawn({
-      commandHandler: (command, process) => {
-        if (command.includes("task1")) {
+      commandHandler: (cmd, args, process) => {
+        const commandString = [cmd, ...args].join(" ")
+        if (commandString.includes("task1")) {
           // Emit stdout that doesn't match ready condition
           setImmediate(() => {
             process.stdout?.emit("data", Buffer.from("Starting...\n"))
@@ -520,8 +524,9 @@ describe("pipeline", () => {
     })
 
     const mockSpawn = createMockSpawn({
-      commandHandler: (command, process) => {
-        if (command.includes("task1")) {
+      commandHandler: (cmd, args, process) => {
+        const commandString = [cmd, ...args].join(" ")
+        if (commandString.includes("task1")) {
           // Emit some stdout but never exit - the timeout should kill it
           setImmediate(() => {
             process.stdout?.emit("data", Buffer.from("Starting...\n"))
@@ -579,7 +584,7 @@ describe("pipeline", () => {
     let spawnCallCount = 0
     let task2Started = false
 
-    const mockSpawn = mock.fn((_command: string) => {
+    const mockSpawn = mock.fn((_cmd: string, _args: string[] = []) => {
       const mockProcess = new EventEmitter() as ChildProcess
       const isTask1 = spawnCallCount === 0
       spawnCallCount++
@@ -786,13 +791,14 @@ describe("pipeline", () => {
         },
       })
 
-      const mockSpawn = mock.fn((command: string) => {
+      const mockSpawn = mock.fn((cmd: string, args: string[] = []) => {
         const mockProcess = new EventEmitter() as ChildProcess
         mockProcess.kill = mock.fn() as any
         mockProcess.stdout = new EventEmitter() as any
         mockProcess.stderr = new EventEmitter() as any
 
-        if (command.includes("teardown")) {
+        const commandString = [cmd, ...args].join(" ")
+        if (commandString.includes("teardown")) {
           teardownExecuted = true
           setImmediate(() => {
             mockProcess.emit("exit", 0)
@@ -952,29 +958,30 @@ describe("pipeline", () => {
         dependencies: [task1],
       })
 
-      const mockSpawn = mock.fn((command: string) => {
+      const mockSpawn = mock.fn((cmd: string, args: string[] = []) => {
         const mockProcess = new EventEmitter() as ChildProcess
         mockProcess.kill = mock.fn() as any
         mockProcess.stdout = new EventEmitter() as any
         mockProcess.stderr = new EventEmitter() as any
 
-        if (command.includes("task2")) {
+        const commandString = [cmd, ...args].join(" ")
+        if (commandString.includes("task2")) {
           task2Spawned = true
         }
 
-        if (command.includes("teardown2")) {
+        if (commandString.includes("teardown2")) {
           task2TeardownExecuted = true
           setImmediate(() => {
             mockProcess.emit("exit", 0)
           })
-        } else if (command.includes("task1")) {
+        } else if (commandString.includes("task1")) {
           // task1 fails immediately
           setImmediate(() => {
             mockProcess.emit("exit", 1)
           })
         } else if (
-          command.includes("teardown") &&
-          !command.includes("teardown2")
+          commandString.includes("teardown") &&
+          !commandString.includes("teardown2")
         ) {
           // task1's teardown
           setImmediate(() => {
