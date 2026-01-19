@@ -500,9 +500,7 @@ describe("pipeline", () => {
     )
 
     // Check task stats
-    const task1Stats = result.stats.tasks.find(
-      (t) => t.name === "task1"
-    )!
+    const task1Stats = result.stats.tasks.find((t) => t.name === "task1")!
     assert.strictEqual(task1Stats.status, "failed")
     assert.ok(task1Stats.startedAt !== undefined)
     assert.ok(task1Stats.finishedAt !== undefined)
@@ -555,9 +553,7 @@ describe("pipeline", () => {
     )
 
     // Check task stats
-    const task1Stats = result.stats.tasks.find(
-      (t) => t.name === "task1"
-    )!
+    const task1Stats = result.stats.tasks.find((t) => t.name === "task1")!
     assert.strictEqual(task1Stats.status, "failed")
     assert.ok(task1Stats.startedAt !== undefined)
     assert.ok(task1Stats.finishedAt !== undefined)
@@ -1013,9 +1009,7 @@ describe("pipeline", () => {
       )
 
       // Check task2 stats
-      const task2Stats = result.stats.tasks.find(
-        (t) => t.name === "task2"
-      )
+      const task2Stats = result.stats.tasks.find((t) => t.name === "task2")
       assert.ok(task2Stats)
       assert.strictEqual(task2Stats.status, "pending")
     })

@@ -400,23 +400,17 @@ describe("stats field validation", () => {
       assert.strictEqual(result.stats.summary.failed, 1) // task3
 
       // Verify task1 (completed)
-      const task1Stats = result.stats.tasks.find(
-        (t) => t.name === "task1"
-      )!
+      const task1Stats = result.stats.tasks.find((t) => t.name === "task1")!
       assert.strictEqual(task1Stats.status, "completed")
       assert.strictEqual(task1Stats.exitCode, 0)
 
       // Verify task2 (skipped)
-      const task2Stats = result.stats.tasks.find(
-        (t) => t.name === "task2"
-      )!
+      const task2Stats = result.stats.tasks.find((t) => t.name === "task2")!
       assert.strictEqual(task2Stats.status, "skipped")
       assert.strictEqual(task2Stats.command, "build")
 
       // Verify task3 (failed)
-      const task3Stats = result.stats.tasks.find(
-        (t) => t.name === "task3"
-      )!
+      const task3Stats = result.stats.tasks.find((t) => t.name === "task3")!
       assert.strictEqual(task3Stats.status, "failed")
       assert.strictEqual(task3Stats.exitCode, 1)
       assert.ok(task3Stats.error instanceof Error)
@@ -442,15 +436,9 @@ describe("stats field validation", () => {
       const pipe = pipeline([task1, task2, task3])
       const result = await pipe.run({ spawn: mockSpawn as any })
 
-      const task1Stats = result.stats.tasks.find(
-        (t) => t.name === "task1"
-      )!
-      const task2Stats = result.stats.tasks.find(
-        (t) => t.name === "task2"
-      )!
-      const task3Stats = result.stats.tasks.find(
-        (t) => t.name === "task3"
-      )!
+      const task1Stats = result.stats.tasks.find((t) => t.name === "task1")!
+      const task2Stats = result.stats.tasks.find((t) => t.name === "task2")!
+      const task3Stats = result.stats.tasks.find((t) => t.name === "task3")!
 
       // task1 has no dependencies, but has dependents
       assert.strictEqual(task1Stats.dependencies.length, 0)
@@ -545,9 +533,7 @@ describe("stats field validation", () => {
 
       assert.strictEqual(result.ok, false)
 
-      const task2Stats = result.stats.tasks.find(
-        (t) => t.name === "task2"
-      )!
+      const task2Stats = result.stats.tasks.find((t) => t.name === "task2")!
       assert.strictEqual(task2Stats.status, "pending")
       assert.strictEqual(task2Stats.command, undefined)
       assert.strictEqual(task2Stats.startedAt, undefined)

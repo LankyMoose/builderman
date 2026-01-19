@@ -39,6 +39,44 @@ export interface CommandConfig {
    * Overrides environment variables inherited from the parent process & task config.
    */
   env?: Record<string, string>
+  /**
+   * Optional configuration for enabling task-level caching.
+   *
+   * When provided, builderman will:
+   * - Compute a snapshot of the configured `input` and `output` paths
+   *   based on their file metadata (mtime and size).
+   * - Store this snapshot under a `.builderman` directory in the current
+   *   process working directory.
+   * - On subsequent runs, compare the current snapshot to the stored one.
+   *   If both the inputs and outputs are unchanged, the task will be
+   *   **skipped** for the current mode instead of spawning the command.
+   *
+   * This is useful for build-style tasks where you want to avoid re-running
+   * expensive work when nothing in the inputs or outputs has changed.
+   */
+  cache?: CommandCacheConfig
+}
+
+/**
+ * Configuration for task-level caching.
+ */
+export interface CommandCacheConfig {
+  /**
+   * Paths that represent the task's inputs.
+   * These are typically source directories (e.g. "src") or files.
+   *
+   * Paths may be absolute or relative to the task's `cwd`.
+   */
+  inputs: string[]
+
+  /**
+   * Paths that represent the task's outputs.
+   * These are typically build output directories (e.g. "dist") or files.
+   *
+   * Paths may be absolute or relative to the task's `cwd`.
+   * If omitted, caching only considers the configured inputs.
+   */
+  outputs?: string[]
 }
 
 /**
@@ -178,7 +216,12 @@ export interface PipelineRunConfig {
    * @param taskId The id of the task that was skipped.
    * @param mode The command mode that was requested (e.g., "dev", "build").
    */
-  onTaskSkipped?: (taskName: string, taskId: string, mode: string) => void
+  onTaskSkipped?: (
+    taskName: string,
+    taskId: string,
+    mode: string,
+    reason: TaskSkippedReason
+  ) => void
   /**
    * Callback invoked when a task's teardown command begins execution.
    * @param taskName The name of the task whose teardown is running.
@@ -193,6 +236,11 @@ export interface PipelineRunConfig {
    */
   onTaskTeardownError?: (taskName: string, taskId: string, error: Error) => void
 }
+
+export type TaskSkippedReason =
+  | "command-not-found"
+  | "cache-hit"
+  | "inner-tasks-skipped"
 
 /**
  * Configuration for converting a pipeline into a task.
@@ -365,6 +413,37 @@ export interface TaskStats {
    * These tasks cannot start until this task completes.
    */
   dependents: string[]
+  /**
+   * Cache-related information for this task.
+   * Only present if the task has cache configuration.
+   */
+  cache?: {
+    /**
+     * Whether the cache was checked (regardless of hit/miss).
+     * Always present when cache is configured.
+     */
+    checked: boolean
+    /**
+     * Path to the cache file used for this task.
+     * Always present when cache is configured.
+     */
+    cacheFile: string
+    /**
+     * Input paths that were monitored for cache invalidation.
+     * Always present when cache is configured.
+     */
+    inputs: string[]
+    /**
+     * Output paths that were monitored for cache invalidation.
+     * Always present when cache is configured.
+     */
+    outputs: string[]
+    /**
+     * Whether the task was skipped due to a cache hit.
+     * Only present when `checked` is `true`.
+     */
+    hit?: boolean
+  }
   /**
    * Statistics for nested tasks when this task represents a pipeline
    * (created via pipeline.toTask()). Only present for pipeline-tasks.

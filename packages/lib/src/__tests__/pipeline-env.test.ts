@@ -16,17 +16,19 @@ describe("environment variables", () => {
       commands: { dev: "echo task1", build: "echo task1" },
     })
 
-    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
-      capturedEnv = options?.env
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-      return mockProcess
-    })
+    const mockSpawn = mock.fn(
+      (_cmd: string, _args: string[] = [], options: any) => {
+        capturedEnv = options?.env
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+        return mockProcess
+      }
+    )
 
     const pipe = pipeline([task1])
     const result = await pipe.run({
@@ -49,17 +51,19 @@ describe("environment variables", () => {
       env: { TEST_VAR: "task-value", TASK_VAR: "task-only" },
     })
 
-    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
-      capturedEnv = options?.env
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-      return mockProcess
-    })
+    const mockSpawn = mock.fn(
+      (_cmd: string, _args: string[] = [], options: any) => {
+        capturedEnv = options?.env
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+        return mockProcess
+      }
+    )
 
     const pipe = pipeline([task1])
     const result = await pipe.run({
@@ -91,17 +95,19 @@ describe("environment variables", () => {
       env: { TEST_VAR: "task-value", TASK_VAR: "task-only" },
     })
 
-    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
-      capturedEnv = options?.env
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-      return mockProcess
-    })
+    const mockSpawn = mock.fn(
+      (_cmd: string, _args: string[] = [], options: any) => {
+        capturedEnv = options?.env
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+        return mockProcess
+      }
+    )
 
     const pipe = pipeline([task1])
     const result = await pipe.run({
@@ -133,17 +139,19 @@ describe("environment variables", () => {
       env: { NESTED_VAR: "nested-value", ANOTHER_VAR: "nested-another" },
     })
 
-    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
-      capturedEnv = options?.env
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-      return mockProcess
-    })
+    const mockSpawn = mock.fn(
+      (_cmd: string, _args: string[] = [], options: any) => {
+        capturedEnv = options?.env
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+        return mockProcess
+      }
+    )
 
     const outerPipeline = pipeline([outerTask])
     const result = await outerPipeline.run({
@@ -234,9 +242,7 @@ describe("environment variables", () => {
     )
 
     // Verify task stats show the correct command
-    const nestedTaskStats = result.stats.tasks.find(
-      (t) => t.name === "nested"
-    )!
+    const nestedTaskStats = result.stats.tasks.find((t) => t.name === "nested")!
     assert.strictEqual(nestedTaskStats.command, "test")
   })
 
@@ -254,17 +260,19 @@ describe("environment variables", () => {
       env: { SHARED_VAR: "nested-value", NESTED_ONLY: "nested-only" },
     })
 
-    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
-      capturedEnv = options?.env
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-      return mockProcess
-    })
+    const mockSpawn = mock.fn(
+      (_cmd: string, _args: string[] = [], options: any) => {
+        capturedEnv = options?.env
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+        return mockProcess
+      }
+    )
 
     const outerPipeline = pipeline([outerTask])
     const result = await outerPipeline.run({
@@ -289,17 +297,19 @@ describe("environment variables", () => {
       commands: { dev: "echo task1", build: "echo task1" },
     })
 
-    const mockSpawn = mock.fn((_cmd: string, _args: string[] = [], options: any) => {
-      capturedEnv = options?.env
-      const mockProcess = new EventEmitter() as ChildProcess
-      mockProcess.kill = mock.fn() as any
-      mockProcess.stdout = new EventEmitter() as any
-      mockProcess.stderr = new EventEmitter() as any
-      setImmediate(() => {
-        mockProcess.emit("exit", 0)
-      })
-      return mockProcess
-    })
+    const mockSpawn = mock.fn(
+      (_cmd: string, _args: string[] = [], options: any) => {
+        capturedEnv = options?.env
+        const mockProcess = new EventEmitter() as ChildProcess
+        mockProcess.kill = mock.fn() as any
+        mockProcess.stdout = new EventEmitter() as any
+        mockProcess.stderr = new EventEmitter() as any
+        setImmediate(() => {
+          mockProcess.emit("exit", 0)
+        })
+        return mockProcess
+      }
+    )
 
     const pipe = pipeline([task1])
     const result = await pipe.run({

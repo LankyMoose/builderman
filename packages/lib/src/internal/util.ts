@@ -104,7 +104,8 @@ export function resolveExecutable(
   const pathDirs = pathEnv.split(process.platform === "win32" ? ";" : ":")
 
   // On Windows, check for .exe, .cmd, .bat extensions
-  const extensions = process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""]
+  const extensions =
+    process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""]
 
   for (const dir of pathDirs) {
     if (!dir) continue

@@ -30,6 +30,7 @@ It is designed for monorepos, long-running development processes, and CI/CD pipe
 > - [Skipping Tasks](#skipping-tasks)
 >   - [Strict Mode](#strict-mode)
 >   - [Task-Level Skip Override](#task-level-skip-override)
+> - [Caching](#caching)
 > - [Execution Statistics](#execution-statistics)
 >   - [Pipeline Statistics](#pipeline-statistics)
 >   - [Task Statistics](#task-statistics)
@@ -45,6 +46,7 @@ It is designed for monorepos, long-running development processes, and CI/CD pipe
 - 📊 **Rich execution statistics** — always available, even on failure
 - ❌ **Never throws** — failures are returned as structured results
 - 🧱 **Composable pipelines** — pipelines can be converted into tasks
+- 💾 **Task-level caching** — skip tasks when inputs and outputs haven't changed
 
 ---
 
@@ -136,6 +138,7 @@ Commands may be:
   - `readyWhen`: a predicate that marks the task as ready
   - `teardown`: cleanup logic to run after completion
   - `env`: environment variables specific to this command
+  - `cache`: configuration for task-level caching (see [Caching](#caching))
 
 ---
 
@@ -440,7 +443,10 @@ Teardowns do **not** run when:
 
 ## Skipping Tasks
 
-If a task does not define a command for the current mode, it is **skipped** by default.
+Tasks can be skipped in two scenarios:
+
+1. **Missing command**: If a task does not define a command for the current mode, it is **skipped** by default
+2. **Cache hit**: If a task has cache configuration and the cache matches, the task is **skipped** (see [Caching](#caching))
 
 Skipped tasks:
 
@@ -468,8 +474,12 @@ const apiTask = task({
 
 const result = await pipeline([dbTask, apiTask]).run({
   command: "build",
-  onTaskSkipped: (taskName, mode) => {
-    console.log(`[${taskName}] skipped (no "${mode}" command)`)
+  onTaskSkipped: (taskName, taskId, mode, reason) => {
+    if (reason === "command-not-found") {
+      console.log(`[${taskName}] skipped (no "${mode}" command)`)
+    } else if (reason === "cache-hit") {
+      console.log(`[${taskName}] skipped (cache hit)`)
+    }
   },
 })
 ```
@@ -514,6 +524,93 @@ const result = await pipeline([dbTask]).run({
 
 ---
 
+## Caching
+
+**builderman** supports task-level caching to skip expensive work when inputs and outputs haven't changed. This is useful for build-style tasks where you want to avoid re-running work when nothing has changed.
+
+### Basic Usage
+
+Enable caching by providing `cache` configuration in your command:
+
+```ts
+const buildTask = task({
+  name: "build",
+  commands: {
+    build: {
+      run: "tsc",
+      cache: {
+        inputs: ["src"],
+        // outputs is optional; if omitted, only inputs are tracked
+        outputs: ["dist"],
+      },
+    },
+  },
+})
+```
+
+When caching is enabled:
+
+1. **First run**: The task executes normally and creates a snapshot of the input and output files
+2. **Subsequent runs**: The task compares the current state with the cached snapshot
+3. **Cache hit**: If inputs and outputs are unchanged, the task is **skipped** (no command execution)
+4. **Cache miss**: If anything changed, the task runs and updates the cache
+
+### How It Works
+
+The cache system:
+
+- Creates a snapshot of file metadata (modification time and size) for all files in the configured input and output paths
+- Stores snapshots in `.builderman/cache/<version>/` relative to the main process's working directory
+- Compares snapshots before running the task
+- Writes the snapshot **after** successful task completion (ensuring outputs are captured)
+
+### Path Resolution
+
+- Paths may be **absolute** or **relative to the task's `cwd`**
+- Directories are recursively scanned for all files
+- Non-existent paths are treated as empty (no files)
+
+### Cache Information in Statistics
+
+When a task has cache configuration, its statistics include cache information:
+
+```ts
+const result = await pipeline([buildTask]).run()
+
+const taskStats = result.stats.tasks[0]
+
+if (taskStats.cache) {
+  console.log("Cache checked:", taskStats.cache.checked)
+  console.log("Cache hit:", taskStats.cache.hit)
+  console.log("Cache file:", taskStats.cache.cacheFile)
+  console.log("Inputs:", taskStats.cache.inputs)
+  console.log("Outputs:", taskStats.cache.outputs)
+}
+```
+
+### Cache Behavior
+
+- **Cache failures never break execution** — if cache checking fails, the task runs normally
+- **Cache is written after completion** — ensures outputs are captured correctly
+- **Cache is per task and command** — each task-command combination has its own cache file
+- **Cache directory is versioned** — stored under `v1/` to allow future cache format changes
+
+### When to Use Caching
+
+Caching is ideal for:
+
+- Build tasks (TypeScript compilation, bundling, etc.)
+- Code generation tasks
+- Any expensive operation where inputs/outputs can be reliably tracked
+
+Caching is **not** suitable for:
+
+- Tasks that have side effects beyond file outputs
+- Tasks that depend on external state (APIs, databases, etc.)
+- Tasks where outputs are non-deterministic
+
+---
+
 ## Execution Statistics
 
 Every pipeline run returns detailed execution statistics.
@@ -549,6 +646,14 @@ for (const task of result.stats.tasks) {
 
   if (task.teardown) {
     console.log("Teardown:", task.teardown.status)
+  }
+
+  // Cache information is available when the task has cache configuration
+  if (task.cache) {
+    console.log("Cache checked:", task.cache.checked)
+    if (task.cache.hit !== undefined) {
+      console.log("Cache hit:", task.cache.hit)
+    }
   }
 
   // when using pipeline.toTask() to convert a pipeline into a task, the task will have subtasks

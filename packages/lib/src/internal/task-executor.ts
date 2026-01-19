@@ -1,11 +1,16 @@
 import * as path from "node:path"
 import * as fs from "node:fs"
 
-import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
+import {
+  $TASK_INTERNAL,
+  $PIPELINE_INTERNAL,
+  CACHE_DIR,
+  CACHE_VERSION,
+} from "./constants.js"
 import { PipelineError } from "../errors.js"
 import { parseCommandLine, resolveExecutable } from "./util.js"
 
-import type { Task, Pipeline } from "../types.js"
+import type { Task, Pipeline, CommandCacheConfig } from "../types.js"
 import type { ExecutionContext } from "./execution-context.js"
 
 /**
@@ -157,14 +162,15 @@ function executeNestedPipeline(
         checkAllInnerTasksReady()
         config?.onTaskComplete?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
       },
-      onTaskSkipped: (nestedTaskName, nestedTaskId, mode) => {
+      onTaskSkipped: (nestedTaskName, nestedTaskId, mode, reason) => {
         if (pipelineStopped) return
         nestedSkippedCount++
         checkAllInnerTasksReady()
         config?.onTaskSkipped?.(
           `${taskName}:${nestedTaskName}`,
           nestedTaskId,
-          mode
+          mode,
+          reason
         )
       },
     })
@@ -203,7 +209,12 @@ function executeNestedPipeline(
           durationMs: finishedAt - startedAt,
           subtasks: nestedTaskStats,
         })
-        config?.onTaskSkipped?.(taskName, taskId, commandName)
+        config?.onTaskSkipped?.(
+          taskName,
+          taskId,
+          commandName,
+          "inner-tasks-skipped"
+        )
         setImmediate(() => {
           callbacks.onTaskSkipped(taskId)
         })
@@ -274,7 +285,7 @@ function executeRegularTask(
       finishedAt,
       durationMs: 0,
     })
-    config?.onTaskSkipped?.(taskName, taskId, commandName)
+    config?.onTaskSkipped?.(taskName, taskId, commandName, "command-not-found")
     // Mark as skipped - this satisfies dependencies and unblocks dependents
     // Use setImmediate to ensure scheduler is at idle yield before receiving skip
     setImmediate(() => {
@@ -289,6 +300,7 @@ function executeRegularTask(
   let completedTimeout = Infinity
   let teardown: string | undefined
   let commandEnv: Record<string, string> = {}
+  let cacheConfig: CommandCacheConfig | undefined
 
   if (typeof commandConfig === "string") {
     commandString = commandConfig
@@ -299,6 +311,7 @@ function executeRegularTask(
     completedTimeout = commandConfig.completedTimeout ?? Infinity
     teardown = commandConfig.teardown
     commandEnv = commandConfig.env ?? {}
+    cacheConfig = commandConfig.cache
   }
 
   // Parse commandSpec into cmd + args
@@ -348,7 +361,11 @@ function executeRegularTask(
   let finalCmd: string
   let finalArgs: string[]
 
-  if (process.platform === "win32" && !cmd.includes("\\") && !cmd.includes("/")) {
+  if (
+    process.platform === "win32" &&
+    !cmd.includes("\\") &&
+    !cmd.includes("/")
+  ) {
     // On Windows, for bare commands like "pnpm" we delegate resolution to cmd.exe
     // so that PATHEXT and other shell semantics are respected. This closely matches
     // Node's spawn behavior when using shell: true, but keeps a consistent API.
@@ -368,6 +385,78 @@ function executeRegularTask(
     if (needsCmdWrapper) {
       finalCmd = process.env.ComSpec || "cmd.exe"
       finalArgs = ["/c", resolvedCmd, ...args]
+    }
+  }
+
+  // If caching is enabled for this command, attempt a cache-based skip
+  let taskCacheFile: string | undefined
+  if (cacheConfig) {
+    const cacheRoot = path.resolve(process.cwd(), CACHE_DIR)
+    const cacheDir = path.join(cacheRoot, "cache", `v${CACHE_VERSION}`)
+    taskCacheFile = path.join(
+      cacheDir,
+      `${sanitizeFileName(taskName)}-${sanitizeFileName(commandName)}.json`
+    )
+
+    // Initialize cache info in task stats
+    const inputPaths = cacheConfig.inputs
+    const outputPaths = cacheConfig.outputs ?? []
+
+    context.updateTaskStatus(taskId, {
+      cache: {
+        checked: false,
+        cacheFile: taskCacheFile,
+        inputs: inputPaths,
+        outputs: outputPaths,
+      },
+    })
+
+    try {
+      // Ensure cache directory exists
+      fs.mkdirSync(path.dirname(taskCacheFile), { recursive: true })
+
+      const previousSnapshot = readSnapshot(taskCacheFile)
+      const currentSnapshot = createSnapshot(taskCwd, cacheConfig)
+
+      if (
+        previousSnapshot &&
+        snapshotsEqual(previousSnapshot, currentSnapshot)
+      ) {
+        const finishedAt = Date.now()
+        context.updateTaskStatus(taskId, {
+          status: "skipped",
+          command: commandName,
+          finishedAt,
+          durationMs: 0,
+          cache: {
+            checked: true,
+            hit: true,
+            cacheFile: taskCacheFile,
+            inputs: inputPaths,
+            outputs: outputPaths,
+          },
+        })
+        config?.onTaskSkipped?.(taskName, taskId, commandName, "cache-hit")
+        setImmediate(() => {
+          callbacks.onTaskSkipped(taskId)
+        })
+        return
+      }
+
+      // Cache miss - update stats to indicate cache was checked but didn't hit
+      context.updateTaskStatus(taskId, {
+        cache: {
+          checked: true,
+          hit: false,
+          cacheFile: taskCacheFile,
+          inputs: inputPaths,
+          outputs: outputPaths,
+        },
+      })
+      // Don't write snapshot here - wait until task completes successfully
+    } catch {
+      // Cache failures must never break task execution. Fall through to normal run.
+      taskCacheFile = undefined
     }
   }
 
@@ -545,6 +634,16 @@ function executeRegularTask(
       return
     }
 
+    // If caching is enabled, write the snapshot after successful completion
+    if (cacheConfig && taskCacheFile) {
+      try {
+        const completedSnapshot = createSnapshot(taskCwd, cacheConfig)
+        writeSnapshot(taskCacheFile, completedSnapshot)
+      } catch {
+        // Cache failures must never break task execution
+      }
+    }
+
     context.updateTaskStatus(taskId, {
       status: "completed",
       finishedAt,
@@ -556,4 +655,139 @@ function executeRegularTask(
     // 🔑 Notify scheduler and drain newly runnable tasks
     callbacks.onTaskComplete(taskId)
   })
+}
+
+interface FileMetadata {
+  path: string
+  mtimeMs: number
+  size: number
+}
+
+interface Snapshot {
+  version: number
+  cwd: string
+  inputs: FileMetadata[]
+  outputs: FileMetadata[]
+}
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_")
+}
+
+function collectFileMetadata(root: string, relPath: string): FileMetadata[] {
+  const fullPath = path.isAbsolute(relPath) ? relPath : path.join(root, relPath)
+
+  if (!fs.existsSync(fullPath)) {
+    return []
+  }
+
+  const stats = fs.statSync(fullPath)
+  if (stats.isDirectory()) {
+    const entries = fs.readdirSync(fullPath, { withFileTypes: true })
+    const results: FileMetadata[] = []
+    for (const entry of entries) {
+      const childRel = path.join(relPath, entry.name)
+      results.push(...collectFileMetadata(root, childRel))
+    }
+    return results
+  }
+
+  if (!stats.isFile()) {
+    return []
+  }
+
+  return [
+    {
+      path: path.relative(root, fullPath).replace(/\\/g, "/"),
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+    },
+  ]
+}
+
+function createSnapshot(
+  taskCwd: string,
+  cacheConfig: import("../types.js").CommandCacheConfig
+): Snapshot {
+  const inputs: FileMetadata[] = []
+  const outputs: FileMetadata[] = []
+
+  const inputPaths = cacheConfig.inputs
+  const outputPaths = cacheConfig.outputs ?? []
+
+  for (const p of inputPaths) {
+    inputs.push(...collectFileMetadata(taskCwd, p))
+  }
+  for (const p of outputPaths) {
+    outputs.push(...collectFileMetadata(taskCwd, p))
+  }
+
+  const sortByPath = (a: FileMetadata, b: FileMetadata) =>
+    a.path.localeCompare(b.path)
+
+  inputs.sort(sortByPath)
+  outputs.sort(sortByPath)
+
+  return {
+    version: CACHE_VERSION,
+    cwd: taskCwd,
+    inputs,
+    outputs,
+  }
+}
+
+function readSnapshot(cacheFile: string): Snapshot | null {
+  if (!fs.existsSync(cacheFile)) {
+    return null
+  }
+  try {
+    const data = fs.readFileSync(cacheFile, "utf8")
+    const parsed = JSON.parse(data) as Snapshot
+    if (parsed.version !== CACHE_VERSION) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeSnapshot(cacheFile: string, snapshot: Snapshot): void {
+  const tmpFile = `${cacheFile}.tmp-${process.pid}-${Date.now()}`
+  fs.writeFileSync(tmpFile, JSON.stringify(snapshot), "utf8")
+  fs.renameSync(tmpFile, cacheFile)
+}
+
+function snapshotsEqual(a: Snapshot, b: Snapshot): boolean {
+  if (a.version !== b.version) return false
+  if (a.cwd !== b.cwd) return false
+
+  if (a.inputs.length !== b.inputs.length) return false
+  if (a.outputs.length !== b.outputs.length) return false
+
+  for (let i = 0; i < a.inputs.length; i++) {
+    const fa = a.inputs[i]
+    const fb = b.inputs[i]
+    if (
+      fa.path !== fb.path ||
+      fa.mtimeMs !== fb.mtimeMs ||
+      fa.size !== fb.size
+    ) {
+      return false
+    }
+  }
+
+  for (let i = 0; i < a.outputs.length; i++) {
+    const fa = a.outputs[i]
+    const fb = b.outputs[i]
+    if (
+      fa.path !== fb.path ||
+      fa.mtimeMs !== fb.mtimeMs ||
+      fa.size !== fb.size
+    ) {
+      return false
+    }
+  }
+
+  return true
 }

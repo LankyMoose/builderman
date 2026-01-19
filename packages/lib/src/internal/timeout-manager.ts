@@ -49,7 +49,11 @@ export function createTimeoutManager(): TimeoutManager {
     /**
      * Set a timeout for a task's readyWhen condition
      */
-    setReadyTimeout(taskId: string, timeout: number, callback: () => void): void {
+    setReadyTimeout(
+      taskId: string,
+      timeout: number,
+      callback: () => void
+    ): void {
       // Clear any existing ready timeout for this task
       const timeoutId = readyTimeouts.get(taskId)
       if (timeoutId) {

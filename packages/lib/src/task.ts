@@ -1,6 +1,6 @@
 import { $TASK_INTERNAL } from "./internal/constants.js"
 import { validateTasks } from "./internal/util.js"
-import type { TaskConfig, Task, Commands } from "./types.js"
+import type { TaskConfig, Task, Commands, CommandCacheConfig } from "./types.js"
 
 /**
  * Creates a task configuration.
@@ -30,8 +30,32 @@ export function task(config: TaskConfig): Task {
         return [key, command]
       }
 
-      const { run, readyWhen, readyTimeout, completedTimeout, teardown, env } =
-        command
+      const {
+        run,
+        readyWhen,
+        readyTimeout,
+        completedTimeout,
+        teardown,
+        env,
+        cache,
+      } = command
+
+      let cacheConfig: CommandCacheConfig | undefined
+      if (cache) {
+        let inputs: string[] = []
+        let outputs: string[] | undefined
+        if (Array.isArray(cache.inputs)) {
+          inputs = filterValidPaths(cache.inputs)
+        }
+        if (Array.isArray(cache.outputs)) {
+          outputs = filterValidPaths(cache.outputs)
+        }
+        cacheConfig = {
+          inputs,
+          outputs,
+        }
+      }
+
       return [
         key,
         {
@@ -41,6 +65,7 @@ export function task(config: TaskConfig): Task {
           completedTimeout,
           teardown,
           env: { ...env },
+          cache: cacheConfig,
         },
       ]
     })
@@ -58,4 +83,10 @@ export function task(config: TaskConfig): Task {
       commands: commandsClone,
     },
   }
+}
+
+function filterValidPaths(paths: string[]): string[] {
+  return paths
+    .filter((p) => typeof p === "string" && p.length > 0)
+    .filter(Boolean)
 }

@@ -36,9 +36,12 @@ export function createMockSpawn(options?: {
       for (const cmdConfig of options.commands) {
         let matches = false
         if (typeof cmdConfig.match === "string") {
-          matches = commandString.includes(cmdConfig.match) || cmd.includes(cmdConfig.match)
+          matches =
+            commandString.includes(cmdConfig.match) ||
+            cmd.includes(cmdConfig.match)
         } else if (cmdConfig.match instanceof RegExp) {
-          matches = cmdConfig.match.test(commandString) || cmdConfig.match.test(cmd)
+          matches =
+            cmdConfig.match.test(commandString) || cmdConfig.match.test(cmd)
         } else {
           matches = cmdConfig.match(cmd, args)
         }
