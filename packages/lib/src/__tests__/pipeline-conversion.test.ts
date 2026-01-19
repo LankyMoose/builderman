@@ -67,39 +67,9 @@ describe("pipeline <-> task conversion", () => {
     assert.strictEqual(result.ok, true)
     assert.strictEqual(result.stats.status, "success")
 
-    // Verify execution order: build pipeline should complete before test starts
-    // Note: pipeline-complete events fire when the scheduler is done, which may be
-    // before individual task exit events due to async timing
-    const buildPipelineCompleteIndex = executionOrder.indexOf(
-      "pipeline-complete:build"
-    )
-    const testStartIndex = executionOrder.indexOf("start:test:unit")
-
-    assert.ok(
-      buildPipelineCompleteIndex !== -1,
-      "build pipeline should complete"
-    )
-    assert.ok(testStartIndex !== -1, "test:unit should start")
-
-    // Build pipeline should complete before test starts
-    assert.ok(
-      buildPipelineCompleteIndex < testStartIndex,
-      `build pipeline should complete before test starts. Build completed at ${buildPipelineCompleteIndex}, test started at ${testStartIndex}. Order: ${executionOrder.join(
-        ", "
-      )}`
-    )
-
-    // Test pipeline should complete before deploy starts
-    const testPipelineCompleteIndex = executionOrder.indexOf(
-      "pipeline-complete:test"
-    )
-    const deployStartIndex = executionOrder.indexOf("start:deploy:upload")
-    assert.ok(
-      testPipelineCompleteIndex < deployStartIndex,
-      `test pipeline should complete before deploy starts. Test completed at ${testPipelineCompleteIndex}, deploy started at ${deployStartIndex}. Order: ${executionOrder.join(
-        ", "
-      )}`
-    )
+    // Note: with pipeline-to-task readiness, dependents may begin once all inner tasks
+    // are ready/complete (before the outer pipeline task itself reports completion).
+    // So we only assert that expected tasks ran, not strict ordering across pipeline tasks.
 
     // Verify all tasks executed
     assert.ok(
@@ -117,6 +87,86 @@ describe("pipeline <-> task conversion", () => {
     assert.ok(
       executionOrder.includes("start:deploy:upload"),
       "deploy:upload should start"
+    )
+  })
+
+  it("unblocks dependents when all inner tasks are ready (pipeline.toTask in dev/watch)", async () => {
+    const executionOrder: string[] = []
+
+    const inner1 = task({
+      name: "inner-1",
+      commands: {
+        dev: {
+          run: "run inner-1",
+          readyWhen: (out) => out.includes("INNER_1_READY"),
+        },
+        build: "run inner-1",
+      },
+    })
+
+    const inner2 = task({
+      name: "inner-2",
+      commands: {
+        dev: {
+          run: "run inner-2",
+          readyWhen: (out) => out.includes("INNER_2_READY"),
+        },
+        build: "run inner-2",
+      },
+    })
+
+    const nested = pipeline([inner1, inner2]).toTask({ name: "nested" })
+
+    const dependent = task({
+      name: "dependent",
+      commands: { dev: "run dependent", build: "run dependent" },
+      dependencies: [nested],
+    })
+
+    const controller = new AbortController()
+
+    const mockSpawn = createMockSpawn({
+      commandHandler: (command, proc) => {
+        if (command.includes("inner-1")) {
+          // Simulate a watch process that becomes ready but never exits
+          setImmediate(() => {
+            proc.stdout?.emit("data", Buffer.from("INNER_1_READY\n"))
+          })
+          return
+        }
+        if (command.includes("inner-2")) {
+          setImmediate(() => {
+            proc.stdout?.emit("data", Buffer.from("INNER_2_READY\n"))
+          })
+          return
+        }
+        if (command.includes("dependent")) {
+          // As soon as the dependent starts, abort the run so the test doesn't hang
+          setImmediate(() => {
+            controller.abort()
+            proc.emit("exit", 0)
+          })
+          return
+        }
+      },
+    })
+
+    const result = await pipeline([nested, dependent]).run({
+      spawn: mockSpawn as any,
+      signal: controller.signal,
+      onTaskBegin: (name) => executionOrder.push(`begin:${name}`),
+      onTaskReady: (name) => executionOrder.push(`ready:${name}`),
+      onTaskComplete: (name) => executionOrder.push(`complete:${name}`),
+      onTaskSkipped: (name, _id, mode) => executionOrder.push(`skip:${name}:${mode}`),
+    })
+
+    // We abort intentionally; the important part is that the dependent started.
+    assert.strictEqual(result.ok, false)
+    assert.ok(
+      executionOrder.includes("begin:dependent"),
+      `dependent should have started after nested became ready. Order: ${executionOrder.join(
+        ", "
+      )}`
     )
   })
 

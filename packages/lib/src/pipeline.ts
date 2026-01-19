@@ -191,6 +191,10 @@ export function pipeline(tasks: Task[]): Pipeline {
           // Task is ready (via readyWhen) - update dependent tasks immediately
           // Only process ready tasks if pipeline hasn't failed
           if (!isPipelineFailed()) {
+            const taskName = taskStats.get(taskId)?.name
+            if (taskName) {
+              config?.onTaskReady?.(taskName, taskId)
+            }
             queueManager.markRunningTaskReady(taskId)
             // Process newly ready tasks immediately
             processReadyTasks()

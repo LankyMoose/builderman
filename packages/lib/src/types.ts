@@ -156,31 +156,42 @@ export interface PipelineRunConfig {
   /**
    * Callback invoked when a task begins execution.
    * @param taskName The name of the task that started.
+   * @param taskId The id of the task that started.
    */
-  onTaskBegin?: (taskName: string) => void
+  onTaskBegin?: (taskName: string, taskId: string) => void
+  /**
+   * Callback invoked when a task becomes ready (via readyWhen condition).
+   * This is called when a task with a `readyWhen` function satisfies its condition.
+   * @param taskName The name of the task that became ready.
+   * @param taskId The id of the task that became ready.
+   */
+  onTaskReady?: (taskName: string, taskId: string) => void
   /**
    * Callback invoked when a task completes successfully.
    * @param taskName The name of the task that completed.
+   * @param taskId The id of the task that completed.
    */
-  onTaskComplete?: (taskName: string) => void
+  onTaskComplete?: (taskName: string, taskId: string) => void
   /**
    * Callback invoked when a task is skipped (e.g., when a command doesn't exist for the current mode).
    * @param taskName The name of the task that was skipped.
+   * @param taskId The id of the task that was skipped.
    * @param mode The command mode that was requested (e.g., "dev", "build").
    */
-  onTaskSkipped?: (taskName: string, mode: string) => void
+  onTaskSkipped?: (taskName: string, taskId: string, mode: string) => void
   /**
    * Callback invoked when a task's teardown command begins execution.
    * @param taskName The name of the task whose teardown is running.
+   * @param taskId The id of the task whose teardown is running.
    */
-  onTaskTeardown?: (taskName: string) => void
+  onTaskTeardown?: (taskName: string, taskId: string) => void
   /**
    * Callback invoked when a task's teardown command fails.
    * Note: Teardown failures do not cause the pipeline to fail.
    * @param taskName The name of the task whose teardown failed.
    * @param error The error that occurred during teardown.
    */
-  onTaskTeardownError?: (taskName: string, error: Error) => void
+  onTaskTeardownError?: (taskName: string, taskId: string, error: Error) => void
 }
 
 /**

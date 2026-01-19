@@ -8,8 +8,8 @@ export interface TeardownCommand {
 
 export interface TeardownManagerConfig {
   spawn: typeof import("node:child_process").spawn
-  onTaskTeardown?: (taskName: string) => void
-  onTaskTeardownError?: (taskName: string, error: Error) => void
+  onTaskTeardown?: (taskName: string, taskId: string) => void
+  onTaskTeardownError?: (taskName: string, taskId: string, error: Error) => void
   updateTaskTeardownStatus: (
     taskId: string,
     status: "not-run" | "completed" | "failed",
@@ -46,7 +46,7 @@ export function createTeardownManager(
     // Remove from map so it doesn't run again
     teardownCommands.delete(taskId)
 
-    config.onTaskTeardown?.(teardown.taskName)
+    config.onTaskTeardown?.(teardown.taskName, taskId)
 
     return new Promise<void>((resolve) => {
       try {
@@ -68,7 +68,7 @@ export function createTeardownManager(
           const teardownError = new Error(
             `[${teardown.taskName}] Teardown failed: ${error.message}`
           )
-          config.onTaskTeardownError?.(teardown.taskName, teardownError)
+          config.onTaskTeardownError?.(teardown.taskName, taskId, teardownError)
           config.updateTaskTeardownStatus(taskId, "failed", teardownError)
           resolveOnce()
         })
@@ -80,7 +80,7 @@ export function createTeardownManager(
                 code ?? 1
               }`
             )
-            config.onTaskTeardownError?.(teardown.taskName, teardownError)
+            config.onTaskTeardownError?.(teardown.taskName, taskId, teardownError)
             config.updateTaskTeardownStatus(taskId, "failed", teardownError)
           } else {
             config.updateTaskTeardownStatus(taskId, "completed")
@@ -91,7 +91,7 @@ export function createTeardownManager(
         const teardownError = new Error(
           `[${teardown.taskName}] Teardown failed to start: ${error.message}`
         )
-        config.onTaskTeardownError?.(teardown.taskName, teardownError)
+        config.onTaskTeardownError?.(teardown.taskName, taskId, teardownError)
         config.updateTaskTeardownStatus(taskId, "failed", teardownError)
         resolve()
       }

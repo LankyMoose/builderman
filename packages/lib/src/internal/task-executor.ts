@@ -80,6 +80,10 @@ function executeNestedPipeline(
   // Track nested pipeline state for skip behavior
   let nestedSkippedCount = 0
   let nestedCompletedCount = 0
+  // Track unique tasks that are ready, complete, or skipped
+  // A task can be both ready and complete, so we use Sets to avoid double-counting
+  const readyOrCompleteTasks = new Set<string>()
+  let didMarkOuterReady = false
 
   // Get total tasks from nested pipeline
   const nestedTotalTasks = nestedPipeline[$PIPELINE_INTERNAL].graph.nodes.size
@@ -96,7 +100,7 @@ function executeNestedPipeline(
     command: commandName,
     startedAt,
   })
-  config?.onTaskBegin?.(taskName)
+  config?.onTaskBegin?.(taskName, taskId)
 
   // Create an abort controller to stop the nested pipeline if needed
   let pipelineStopped = false
@@ -109,6 +113,19 @@ function executeNestedPipeline(
     ...taskEnv,
   }
 
+  // Helper to check if all inner tasks are ready/complete/skipped
+  const checkAllInnerTasksReady = () => {
+    if (didMarkOuterReady) return
+    // Count unique tasks: ready (via readyWhen), complete, or skipped
+    // A task can be both ready and complete, so we use a Set to track unique tasks
+    const totalFinished = readyOrCompleteTasks.size + nestedSkippedCount
+    if (totalFinished === nestedTotalTasks && nestedTotalTasks > 0) {
+      didMarkOuterReady = true
+      // Mark outer task as ready - this allows dependents to proceed
+      callbacks.onTaskReady(taskId)
+    }
+  }
+
   // Run the nested pipeline with signal propagation
   // Pass the command from parent pipeline to nested pipeline
   // If undefined, nested pipeline will use its own default (build/dev based on NODE_ENV)
@@ -119,19 +136,35 @@ function executeNestedPipeline(
       strict: config?.strict,
       signal: context.signal, // Pass signal to nested pipeline
       env: mergedEnv, // Pass merged env to nested pipeline
-      onTaskBegin: (nestedTaskName) => {
+      onTaskBegin: (nestedTaskName, nestedTaskId) => {
         if (pipelineStopped) return
-        config?.onTaskBegin?.(`${taskName}:${nestedTaskName}`)
+        config?.onTaskBegin?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
       },
-      onTaskComplete: (nestedTaskName) => {
+      onTaskReady: (_, nestedTaskId) => {
+        if (pipelineStopped) return
+        // Track this task as ready (it may later become complete, but we only count it once)
+        readyOrCompleteTasks.add(nestedTaskId)
+        checkAllInnerTasksReady()
+        // Note: We don't call config?.onTaskReady here because the nested pipeline
+        // already handles that internally. We only track readiness for the outer task.
+      },
+      onTaskComplete: (nestedTaskName, nestedTaskId) => {
         if (pipelineStopped) return
         nestedCompletedCount++
-        config?.onTaskComplete?.(`${taskName}:${nestedTaskName}`)
+        // Track this task as complete (if it was already ready, the Set prevents double-counting)
+        readyOrCompleteTasks.add(nestedTaskId)
+        checkAllInnerTasksReady()
+        config?.onTaskComplete?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
       },
-      onTaskSkipped: (nestedTaskName, mode) => {
+      onTaskSkipped: (nestedTaskName, nestedTaskId, mode) => {
         if (pipelineStopped) return
         nestedSkippedCount++
-        config?.onTaskSkipped?.(`${taskName}:${nestedTaskName}`, mode)
+        checkAllInnerTasksReady()
+        config?.onTaskSkipped?.(
+          `${taskName}:${nestedTaskName}`,
+          nestedTaskId,
+          mode
+        )
       },
     })
     .then((result) => {
@@ -162,7 +195,7 @@ function executeNestedPipeline(
           finishedAt,
           durationMs: finishedAt - startedAt,
         })
-        config?.onTaskSkipped?.(taskName, commandName)
+        config?.onTaskSkipped?.(taskName, taskId, commandName)
         setImmediate(() => {
           callbacks.onTaskSkipped(taskId)
         })
@@ -174,7 +207,7 @@ function executeNestedPipeline(
           finishedAt,
           durationMs: finishedAt - startedAt,
         })
-        config?.onTaskComplete?.(taskName)
+        config?.onTaskComplete?.(taskName, taskId)
         // Mark as complete - this will update dependent tasks and allow them to start
         callbacks.onTaskComplete(taskId)
       }
@@ -232,7 +265,7 @@ function executeRegularTask(
       finishedAt,
       durationMs: 0,
     })
-    config?.onTaskSkipped?.(taskName, commandName)
+    config?.onTaskSkipped?.(taskName, taskId, commandName)
     // Mark as skipped - this satisfies dependencies and unblocks dependents
     // Use setImmediate to ensure scheduler is at idle yield before receiving skip
     setImmediate(() => {
@@ -326,7 +359,7 @@ function executeRegularTask(
     })
   }
 
-  config?.onTaskBegin?.(taskName)
+  config?.onTaskBegin?.(taskName, taskId)
 
   let didMarkReady = false
 
@@ -475,7 +508,7 @@ function executeRegularTask(
       durationMs,
       exitCode: code ?? 0,
     })
-    config?.onTaskComplete?.(taskName)
+    config?.onTaskComplete?.(taskName, taskId)
 
     // 🔑 Notify scheduler and drain newly runnable tasks
     callbacks.onTaskComplete(taskId)

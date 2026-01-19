@@ -1103,7 +1103,7 @@ describe("pipeline", () => {
       const result = await pipe.run({
         command: "build",
         spawn: mockSpawn as any,
-        onTaskSkipped: (taskName, mode) => {
+        onTaskSkipped: (taskName, _taskId, mode) => {
           assert.strictEqual(taskName, "task1")
           assert.strictEqual(mode, "build")
           skippedCalled = true
@@ -1216,7 +1216,7 @@ describe("pipeline", () => {
         command: "build",
         strict: true,
         spawn: mockSpawn as any,
-        onTaskSkipped: (taskName, mode) => {
+        onTaskSkipped: (taskName, _taskId, mode) => {
           assert.strictEqual(taskName, "task1")
           assert.strictEqual(mode, "build")
           skippedCalled = true
@@ -1263,7 +1263,7 @@ describe("pipeline", () => {
       const result = await pipe.run({
         command: "build",
         spawn: mockSpawn as any,
-        onTaskSkipped: (taskName, _mode) => {
+        onTaskSkipped: (taskName, _taskId, _mode) => {
           if (taskName === "outer") {
             outerSkipped = true
           }
