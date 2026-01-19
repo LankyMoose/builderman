@@ -485,5 +485,73 @@ describe("cache", () => {
       assert.ok(taskStats.cache.outputs.includes("dist"))
       assert.ok(taskStats.cache.outputs.includes("build"))
     })
+
+    it("sanitizes cache file names for special characters in task/command names", async () => {
+      const testDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "builderman-sanitize-test-")
+      )
+      const inputDir = path.join(testDir, "src")
+      const cacheDir = path.join(process.cwd(), ".builderman", "cache", "v1")
+
+      try {
+        fs.mkdirSync(inputDir, { recursive: true })
+        fs.writeFileSync(path.join(inputDir, "file.ts"), "export const a = 1")
+
+        // Task name with special characters (colon, slash, space)
+        const task1 = task({
+          name: "lib:build/test task",
+          cwd: testDir,
+          commands: {
+            "build:prod": {
+              // Command name also has special characters
+              run: "echo build",
+              cache: {
+                inputs: ["src"],
+              },
+            },
+          },
+        })
+
+        const mockSpawn = createMockSpawn()
+        const pipe = pipeline([task1])
+
+        const first = await pipe.run({
+          command: "build:prod",
+          spawn: mockSpawn as any,
+        })
+        assert.strictEqual(first.ok, true)
+
+        // Verify cache file was created with sanitized name
+        // "lib:build/test task" -> "lib_build_test_task"
+        // "build:prod" -> "build_prod"
+        const expectedCacheFile = path.join(
+          cacheDir,
+          "lib_build_test_task-build_prod.json"
+        )
+        assert.ok(
+          fs.existsSync(expectedCacheFile),
+          `Cache file should exist at ${expectedCacheFile}`
+        )
+
+        // Verify cache info in stats uses the sanitized file name
+        const taskStats = first.stats.tasks[0]
+        assert.ok(taskStats.cache !== undefined)
+        assert.strictEqual(taskStats.cache.cacheFile, expectedCacheFile)
+
+        // Verify cache works correctly with sanitized names
+        const second = await pipe.run({
+          command: "build:prod",
+          spawn: mockSpawn as any,
+        })
+        assert.strictEqual(second.ok, true)
+        assert.strictEqual(second.stats.summary.skipped, 1)
+      } finally {
+        fs.rmSync(testDir, { recursive: true, force: true })
+        const cacheFile = path.join(cacheDir, "lib_build_test_task-build_prod.json")
+        if (fs.existsSync(cacheFile)) {
+          fs.unlinkSync(cacheFile)
+        }
+      }
+    })
   })
 })
