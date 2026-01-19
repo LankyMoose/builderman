@@ -1,32 +1,38 @@
-import { type ChildProcess } from "node:child_process"
 import * as path from "node:path"
 import * as fs from "node:fs"
 
-import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "../constants.js"
-import { PipelineError } from "../pipeline-error.js"
+import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
+import { PipelineError } from "../errors.js"
 
-import type {
-  Task,
-  Pipeline,
-  PipelineRunConfig,
-  TaskGraph,
-  TaskStats,
-} from "../types.js"
-import type { SchedulerInput } from "../scheduler.js"
-import type { TeardownManager } from "./teardown-manager.js"
+import type { Task, Pipeline } from "../types.js"
+import type { ExecutionContext } from "./execution-context.js"
 
-export interface TaskExecutorConfig {
-  spawn: typeof import("node:child_process").spawn
-  signal?: AbortSignal
-  config?: PipelineRunConfig
-  graph: TaskGraph
-  runningTasks: Map<string, ChildProcess>
-  runningPipelines: Map<string, { stop: () => void }>
-  teardownManager: TeardownManager
-  failPipeline: (error: PipelineError) => Promise<void>
-  advanceScheduler: (input?: SchedulerInput) => void
-  updateTaskStatus: (taskId: string, updates: Partial<TaskStats>) => void
-  taskStats: Map<string, TaskStats>
+/**
+ * Callbacks for task execution events that replace scheduler coordination.
+ * These callbacks are invoked by the task executor to notify the queue manager
+ * of task state changes, enabling queue-based execution flow.
+ */
+export interface TaskExecutionCallbacks {
+  /**
+   * Called when a task becomes ready (e.g., via readyWhen condition).
+   * This allows dependent tasks to start executing.
+   */
+  onTaskReady: (taskId: string) => void
+  /**
+   * Called when a task completes successfully.
+   * Updates dependent task dependency counts and moves ready tasks to execution queue.
+   */
+  onTaskComplete: (taskId: string) => void
+  /**
+   * Called when a task fails.
+   * Triggers pipeline failure and cleanup.
+   */
+  onTaskFailed: (taskId: string, error: Error) => void
+  /**
+   * Called when a task is skipped (e.g., missing command in non-strict mode).
+   * Treated similarly to completion for dependency resolution.
+   */
+  onTaskSkipped: (taskId: string) => void
 }
 
 /**
@@ -34,11 +40,13 @@ export interface TaskExecutorConfig {
  */
 export function executeTask(
   task: Task,
-  executorConfig: TaskExecutorConfig
+  context: ExecutionContext,
+  callbacks: TaskExecutionCallbacks
 ): void {
   // Check if signal is aborted before starting new tasks
-  if (executorConfig.signal?.aborted) {
-    executorConfig.failPipeline(
+  if (context.signal?.aborted) {
+    callbacks.onTaskFailed(
+      task[$TASK_INTERNAL].id,
       new PipelineError("Aborted", PipelineError.Aborted)
     )
     return
@@ -46,25 +54,17 @@ export function executeTask(
 
   const {
     name: taskName,
-    [$TASK_INTERNAL]: { id: taskId, pipeline: nestedPipeline },
+    [$TASK_INTERNAL]: { id, pipeline },
   } = task
 
-  if (executorConfig.runningTasks.has(taskId)) return
-
   // Handle pipeline tasks
-  if (nestedPipeline) {
-    executeNestedPipeline(
-      task,
-      taskId,
-      taskName,
-      nestedPipeline,
-      executorConfig
-    )
+  if (pipeline) {
+    executeNestedPipeline(task, id, taskName, pipeline, context, callbacks)
     return
   }
 
   // Regular task execution
-  executeRegularTask(task, taskId, taskName, executorConfig)
+  executeRegularTask(task, id, taskName, context, callbacks)
 }
 
 function executeNestedPipeline(
@@ -72,15 +72,10 @@ function executeNestedPipeline(
   taskId: string,
   taskName: string,
   nestedPipeline: Pipeline,
-  executorConfig: TaskExecutorConfig
+  context: ExecutionContext,
+  callbacks: TaskExecutionCallbacks
 ): void {
-  const {
-    config,
-    runningPipelines,
-    failPipeline,
-    advanceScheduler,
-    updateTaskStatus,
-  } = executorConfig
+  const { config } = context
 
   // Track nested pipeline state for skip behavior
   let nestedSkippedCount = 0
@@ -90,27 +85,21 @@ function executeNestedPipeline(
   const nestedTotalTasks = nestedPipeline[$PIPELINE_INTERNAL].graph.nodes.size
 
   const commandName =
-    config?.command ?? process.env.NODE_ENV === "production" ? "build" : "dev"
+    config?.command ?? (process.env.NODE_ENV === "production" ? "build" : "dev")
 
-  // Mark as ready immediately (pipeline entry nodes will handle their own ready state)
+  // Mark as running - nested pipeline tasks handle their own ready state
+  // We don't call onTaskReady here because dependent tasks should wait for
+  // the nested pipeline to complete, not just start
   const startedAt = Date.now()
-  updateTaskStatus(taskId, {
+  context.updateTaskStatus(taskId, {
     status: "running",
     command: commandName,
     startedAt,
   })
-  advanceScheduler({ type: "ready", taskId })
   config?.onTaskBegin?.(taskName)
 
   // Create an abort controller to stop the nested pipeline if needed
   let pipelineStopped = false
-  const stopPipeline = () => {
-    pipelineStopped = true
-    // The nested pipeline will continue running, but we've marked it as stopped
-    // In a more sophisticated implementation, we could propagate stop signals
-  }
-
-  runningPipelines.set(taskId, { stop: stopPipeline })
 
   // Merge environment variables: pipeline.env -> task.env (from pipeline.toTask config)
   const taskEnv = task[$TASK_INTERNAL].env
@@ -121,12 +110,14 @@ function executeNestedPipeline(
   }
 
   // Run the nested pipeline with signal propagation
+  // Pass the command from parent pipeline to nested pipeline
+  // If undefined, nested pipeline will use its own default (build/dev based on NODE_ENV)
   nestedPipeline
     .run({
-      spawn: executorConfig.spawn,
-      command: config?.command,
+      spawn: context.spawn,
+      command: config?.command, // Pass command to nested pipeline
       strict: config?.strict,
-      signal: executorConfig.signal, // Pass signal to nested pipeline
+      signal: context.signal, // Pass signal to nested pipeline
       env: mergedEnv, // Pass merged env to nested pipeline
       onTaskBegin: (nestedTaskName) => {
         if (pipelineStopped) return
@@ -145,18 +136,17 @@ function executeNestedPipeline(
     })
     .then((result) => {
       if (pipelineStopped) return
-      runningPipelines.delete(taskId)
 
       if (!result.ok) {
         // Nested pipeline failed
         const finishedAt = Date.now()
-        updateTaskStatus(taskId, {
+        context.updateTaskStatus(taskId, {
           status: "failed",
           finishedAt,
           durationMs: finishedAt - startedAt,
           error: result.error,
         })
-        failPipeline(result.error)
+        callbacks.onTaskFailed(taskId, result.error)
         return
       }
 
@@ -167,25 +157,26 @@ function executeNestedPipeline(
       if (nestedSkippedCount === nestedTotalTasks && nestedTotalTasks > 0) {
         // All tasks were skipped
         const finishedAt = Date.now()
-        updateTaskStatus(taskId, {
+        context.updateTaskStatus(taskId, {
           status: "skipped",
           finishedAt,
           durationMs: finishedAt - startedAt,
         })
         config?.onTaskSkipped?.(taskName, commandName)
         setImmediate(() => {
-          advanceScheduler({ type: "skip", taskId })
+          callbacks.onTaskSkipped(taskId)
         })
       } else {
         // Some tasks ran (and completed successfully)
         const finishedAt = Date.now()
-        updateTaskStatus(taskId, {
+        context.updateTaskStatus(taskId, {
           status: "completed",
           finishedAt,
           durationMs: finishedAt - startedAt,
         })
         config?.onTaskComplete?.(taskName)
-        advanceScheduler({ type: "complete", taskId })
+        // Mark as complete - this will update dependent tasks and allow them to start
+        callbacks.onTaskComplete(taskId)
       }
     })
 }
@@ -194,23 +185,21 @@ function executeRegularTask(
   task: Task,
   taskId: string,
   taskName: string,
-  executorConfig: TaskExecutorConfig
+  context: ExecutionContext,
+  callbacks: TaskExecutionCallbacks
 ): void {
   const {
+    config,
     spawn: spawnFn,
     signal,
-    config,
-    runningTasks,
     teardownManager,
-    failPipeline,
-    advanceScheduler,
-    updateTaskStatus,
-  } = executorConfig
+    timeoutManager,
+  } = context
 
   const { allowSkip, commands, cwd, env: taskEnv } = task[$TASK_INTERNAL]
 
   const commandName =
-    config?.command ?? process.env.NODE_ENV === "production" ? "build" : "dev"
+    config?.command ?? (process.env.NODE_ENV === "production" ? "build" : "dev")
   const commandConfig = commands[commandName]
 
   // Check if command exists
@@ -225,19 +214,19 @@ function executeRegularTask(
         taskName
       )
       const finishedAt = Date.now()
-      updateTaskStatus(taskId, {
+      context.updateTaskStatus(taskId, {
         status: "failed",
         command: commandName,
         finishedAt,
         error,
       })
-      failPipeline(error)
+      callbacks.onTaskFailed(taskId, error)
       return
     }
 
     // Skip the task
     const finishedAt = Date.now()
-    updateTaskStatus(taskId, {
+    context.updateTaskStatus(taskId, {
       status: "skipped",
       command: commandName,
       finishedAt,
@@ -247,7 +236,7 @@ function executeRegularTask(
     // Mark as skipped - this satisfies dependencies and unblocks dependents
     // Use setImmediate to ensure scheduler is at idle yield before receiving skip
     setImmediate(() => {
-      advanceScheduler({ type: "skip", taskId })
+      callbacks.onTaskSkipped(taskId)
     })
     return
   }
@@ -279,14 +268,14 @@ function executeRegularTask(
       PipelineError.InvalidTask,
       taskName
     )
-    updateTaskStatus(taskId, {
+    context.updateTaskStatus(taskId, {
       status: "failed",
       command: commandName,
       finishedAt,
       durationMs: 0,
       error: pipelineError,
     })
-    failPipeline(pipelineError)
+    callbacks.onTaskFailed(taskId, pipelineError)
     return
   }
 
@@ -315,10 +304,14 @@ function executeRegularTask(
     env: accumulatedEnv,
   })
 
-  runningTasks.set(taskId, child)
+  // Update the running task execution with the process
+  const runningTasks = context.queueManager.getRunningTasks()
+  const execution = runningTasks.get(taskId)!
+  execution.process = child
+  context.queueManager.markTaskRunning(taskId, execution)
 
   const startedAt = Date.now()
-  updateTaskStatus(taskId, {
+  context.updateTaskStatus(taskId, {
     status: "running",
     command: commandName,
     startedAt,
@@ -336,15 +329,22 @@ function executeRegularTask(
   config?.onTaskBegin?.(taskName)
 
   let didMarkReady = false
-  let readyTimeoutId: NodeJS.Timeout | null = null
-  let completedTimeoutId: NodeJS.Timeout | null = null
 
   if (!readyWhen) {
-    advanceScheduler({ type: "ready", taskId })
-    didMarkReady = true
+    // For tasks without readyWhen, mark as ready after a microtask
+    // This ensures the task has actually started before we update dependents
+    // This prevents race conditions where a task fails immediately after starting
+    setImmediate(() => {
+      // Check if task hasn't failed before marking as ready
+      const currentStats = context.taskStats.get(taskId)
+      if (currentStats?.status !== "failed" && !context.isAborted()) {
+        callbacks.onTaskReady(taskId)
+        didMarkReady = true
+      }
+    })
   } else if (readyTimeout !== Infinity) {
-    // Set up timeout for readyWhen condition
-    readyTimeoutId = setTimeout(() => {
+    // Set up timeout for readyWhen condition using TimeoutManager
+    timeoutManager.setReadyTimeout(taskId, readyTimeout, () => {
       if (!didMarkReady) {
         const finishedAt = Date.now()
         const pipelineError = new PipelineError(
@@ -352,32 +352,26 @@ function executeRegularTask(
           PipelineError.TaskReadyTimeout,
           taskName
         )
-        // Clear completed timeout if it exists
-        if (completedTimeoutId) {
-          clearTimeout(completedTimeoutId)
-          completedTimeoutId = null
-        }
-        // Remove from runningTasks before calling failPipeline to prevent it from
-        // being marked as "aborted" - this task failed for a specific reason
-        runningTasks.delete(taskId)
+        // Clear completion timeout if it exists
+        timeoutManager.clearCompletionTimeout(taskId)
         // Kill the process since it didn't become ready in time
         try {
           child.kill("SIGTERM")
         } catch {}
-        updateTaskStatus(taskId, {
+        context.updateTaskStatus(taskId, {
           status: "failed",
           finishedAt,
           durationMs: finishedAt - startedAt,
           error: pipelineError,
         })
-        failPipeline(pipelineError)
+        callbacks.onTaskFailed(taskId, pipelineError)
       }
-    }, readyTimeout)
+    })
   }
 
-  // Set up timeout for task completion
+  // Set up timeout for task completion using TimeoutManager
   if (completedTimeout !== Infinity) {
-    completedTimeoutId = setTimeout(() => {
+    timeoutManager.setCompletionTimeout(taskId, completedTimeout, () => {
       // Task didn't complete within the timeout
       const finishedAt = Date.now()
       const pipelineError = new PipelineError(
@@ -386,25 +380,19 @@ function executeRegularTask(
         taskName
       )
       // Clear ready timeout if it exists (to prevent it from firing after we've already failed)
-      if (readyTimeoutId) {
-        clearTimeout(readyTimeoutId)
-        readyTimeoutId = null
-      }
-      // Remove from runningTasks before calling failPipeline to prevent it from
-      // being marked as "aborted" - this task failed for a specific reason
-      runningTasks.delete(taskId)
+      timeoutManager.clearReadyTimeout(taskId)
       // Kill the process since it didn't complete in time
       try {
         child.kill("SIGTERM")
       } catch {}
-      updateTaskStatus(taskId, {
+      context.updateTaskStatus(taskId, {
         status: "failed",
         finishedAt,
         durationMs: finishedAt - startedAt,
         error: pipelineError,
       })
-      failPipeline(pipelineError)
-    }, completedTimeout)
+      callbacks.onTaskFailed(taskId, pipelineError)
+    })
   }
 
   let output = ""
@@ -420,11 +408,8 @@ function executeRegularTask(
     process.stdout.write(chunk)
 
     if (!didMarkReady && readyWhen && readyWhen(output)) {
-      if (readyTimeoutId) {
-        clearTimeout(readyTimeoutId)
-        readyTimeoutId = null
-      }
-      advanceScheduler({ type: "ready", taskId })
+      timeoutManager.clearReadyTimeout(taskId)
+      callbacks.onTaskReady(taskId)
       didMarkReady = true
     }
   })
@@ -438,16 +423,8 @@ function executeRegularTask(
     // Remove teardown from map since it was never actually running
     teardownManager.unregister(taskId)
 
-    // Clear ready timeout if it exists
-    if (readyTimeoutId) {
-      clearTimeout(readyTimeoutId)
-      readyTimeoutId = null
-    }
-    // Clear completed timeout if it exists
-    if (completedTimeoutId) {
-      clearTimeout(completedTimeoutId)
-      completedTimeoutId = null
-    }
+    // Clear all timeouts for this task
+    timeoutManager.clearTaskTimeouts(taskId)
 
     const finishedAt = Date.now()
     const pipelineError = new PipelineError(
@@ -455,32 +432,22 @@ function executeRegularTask(
       PipelineError.TaskFailed,
       taskName
     )
-    updateTaskStatus(taskId, {
+    context.updateTaskStatus(taskId, {
       status: "failed",
       finishedAt,
       durationMs: finishedAt - startedAt,
       error: pipelineError,
     })
-    failPipeline(pipelineError)
+    callbacks.onTaskFailed(taskId, pipelineError)
   })
 
   child.on("exit", (code: number | null, signal: string | null) => {
-    runningTasks.delete(taskId)
-
-    // Clear ready timeout if it exists
-    if (readyTimeoutId) {
-      clearTimeout(readyTimeoutId)
-      readyTimeoutId = null
-    }
-    // Clear completed timeout if it exists
-    if (completedTimeoutId) {
-      clearTimeout(completedTimeoutId)
-      completedTimeoutId = null
-    }
+    // Clear all timeouts for this task
+    timeoutManager.clearTaskTimeouts(taskId)
 
     // Check if task was already marked as failed (e.g., by timeout handlers)
     // If so, don't process the exit event to avoid conflicts
-    const currentStats = executorConfig.taskStats.get(taskId)
+    const currentStats = context.taskStats.get(taskId)
     if (currentStats?.status === "failed" && currentStats?.error) {
       // Task was already failed, likely by a timeout handler
       // Just return to avoid duplicate error handling
@@ -499,7 +466,7 @@ function executeRegularTask(
         PipelineError.TaskFailed,
         taskName
       )
-      updateTaskStatus(taskId, {
+      context.updateTaskStatus(taskId, {
         status: "failed",
         finishedAt,
         durationMs,
@@ -507,11 +474,11 @@ function executeRegularTask(
         signal: signal ?? undefined,
         error: pipelineError,
       })
-      failPipeline(pipelineError)
+      callbacks.onTaskFailed(taskId, pipelineError)
       return
     }
 
-    updateTaskStatus(taskId, {
+    context.updateTaskStatus(taskId, {
       status: "completed",
       finishedAt,
       durationMs,
@@ -520,6 +487,6 @@ function executeRegularTask(
     config?.onTaskComplete?.(taskName)
 
     // 🔑 Notify scheduler and drain newly runnable tasks
-    advanceScheduler({ type: "complete", taskId })
+    callbacks.onTaskComplete(taskId)
   })
 }

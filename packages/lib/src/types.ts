@@ -1,5 +1,8 @@
-import type { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
-import type { PipelineError } from "./pipeline-error.js"
+import type {
+  $TASK_INTERNAL,
+  $PIPELINE_INTERNAL,
+} from "./internal/constants.js"
+import type { PipelineError } from "./errors.js"
 
 /**
  * Configuration for a command to be executed as part of a task.
@@ -145,6 +148,11 @@ export interface PipelineRunConfig {
    * Use this for CI/release pipelines where every task is expected to participate.
    */
   strict?: boolean
+  /**
+   * Maximum number of tasks that can run concurrently.
+   * @default Infinity (no limit)
+   */
+  maxConcurrency?: number
   /**
    * Callback invoked when a task begins execution.
    * @param taskName The name of the task that started.

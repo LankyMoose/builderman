@@ -1,18 +1,23 @@
-import { spawn, type ChildProcess } from "node:child_process"
+import { spawn } from "node:child_process"
 
-import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
-import { createTaskGraph } from "./graph.js"
-import { PipelineError } from "./pipeline-error.js"
-import { createScheduler, type SchedulerInput } from "./scheduler.js"
+import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./internal/constants.js"
+import { createTaskGraph } from "./internal/graph.js"
+import { validateTasks } from "./internal/util.js"
+import { createTeardownManager } from "./internal/teardown-manager.js"
+import { createSignalHandler } from "./internal/signal-handler.js"
+import {
+  executeTask,
+  type TaskExecutionCallbacks,
+} from "./internal/task-executor.js"
+import { createQueueManager } from "./internal/queue-manager.js"
+import { createTimeoutManager } from "./internal/timeout-manager.js"
+import { createExecutionContext } from "./internal/execution-context.js"
+import { PipelineError } from "./errors.js"
 import { task } from "./task.js"
-import { validateTasks } from "./util.js"
-import { createTeardownManager } from "./modules/teardown-manager.js"
-import { createSignalHandler } from "./modules/signal-handler.js"
-import { executeTask } from "./modules/task-executor.js"
+
 import type {
   Pipeline,
   Task,
-  PipelineTaskConfig,
   RunResult,
   PipelineStats,
   TaskStats,
@@ -41,7 +46,7 @@ export function pipeline(tasks: Task[]): Pipeline {
       graph,
     },
 
-    toTask({ name, dependencies, env }: PipelineTaskConfig): Task {
+    toTask({ name, dependencies, env }): Task {
       const syntheticTask = task({
         name,
         commands: {},
@@ -55,11 +60,9 @@ export function pipeline(tasks: Task[]): Pipeline {
       return syntheticTask
     },
 
-    async run(config): Promise<RunResult> {
+    async run(config) {
       const spawnFn = config?.spawn ?? spawn
       const signal = config?.signal
-      const runningTasks = new Map<string, ChildProcess>()
-      const runningPipelines = new Map<string, { stop: () => void }>()
       let failed = false
 
       const command =
@@ -80,24 +83,23 @@ export function pipeline(tasks: Task[]): Pipeline {
         })
       }
 
-      // Helper to update task status
-      const updateTaskStatus = (
-        taskId: string,
-        updates: Partial<TaskStats>
-      ) => {
-        const stats = taskStats.get(taskId)
-        if (stats) {
-          Object.assign(stats, updates)
-        }
-      }
-
       // Check if signal is already aborted
       if (signal?.aborted) {
         const error = new PipelineError("Aborted", PipelineError.Aborted)
         return buildResult(error, startedAt, command, taskStats, "aborted")
       }
 
-      const scheduler = createScheduler(graph)
+      // Helper to update task status
+      const updateTaskStatus = (
+        taskId: string,
+        updates: Partial<TaskStats>
+      ) => {
+        const stats = taskStats.get(taskId)!
+        Object.assign(stats, updates)
+      }
+
+      // Initialize queue manager
+      const queueManager = createQueueManager(graph, config?.maxConcurrency)
 
       let completionResolver: ((error: PipelineError | null) => void) | null =
         null
@@ -110,88 +112,66 @@ export function pipeline(tasks: Task[]): Pipeline {
         ...config,
         spawn: spawnFn,
         updateTaskTeardownStatus: (taskId, status, error) => {
-          const stats = taskStats.get(taskId)
+          const stats = taskStats.get(taskId)!
           if (stats) {
             stats.teardown = { status, error }
           }
         },
       })
 
-      const advanceScheduler = (input?: SchedulerInput) => {
-        // Check if signal is aborted before advancing scheduler
-        if (signal?.aborted) {
-          failPipeline(new PipelineError("Aborted", PipelineError.Aborted))
-          return
-        }
+      // Initialize timeout manager
+      const timeoutManager = createTimeoutManager()
 
-        let result = input ? scheduler.next(input) : scheduler.next()
-
-        // If we passed skip/complete input and got "idle", the generator processed it
-        // but returned the old yield. Call next() again to get the result after processing.
-        if (
-          input &&
-          (input.type === "skip" || input.type === "complete") &&
-          result.value?.type === "idle"
-        ) {
-          result = scheduler.next()
-        }
-
-        while (true) {
-          // Check signal again in the loop
-          if (signal?.aborted) {
-            failPipeline(new PipelineError("Aborted", PipelineError.Aborted))
-            return
-          }
-
-          const event = result.value
-          const isFinished = result.done && result.value.type === "done"
-
-          if (isFinished) {
-            completionResolver?.(null)
-            return
-          }
-
-          if (event.type === "run") {
-            startTask(graph.nodes.get(event.taskId)!.task)
-            result = scheduler.next()
-            continue
-          }
-
-          if (event.type === "idle") {
-            return
-          }
-        }
-      }
+      // Create execution context
+      const executionContext = createExecutionContext(
+        config ?? {},
+        teardownManager,
+        timeoutManager,
+        queueManager,
+        taskStats
+      )
 
       const failPipeline = async (error: PipelineError) => {
-        if (failed) return
+        // Prevent multiple calls to failPipeline
+        if (failed) {
+          // If we're already failing, just resolve with the error to prevent hanging
+          completionResolver?.(error)
+          return
+        }
         failed = true
 
+        // Clear all timeouts
+        timeoutManager.clearAllTimeouts()
+
+        // Get running tasks before clearing queues (so we can kill them)
+        const runningTasksSnapshot = queueManager.getRunningTasks()
+
+        // Clear queues immediately to prevent any new tasks from starting
+        // This must happen before we process running tasks to prevent race conditions
+        queueManager.clearQueues()
+
         // Mark running tasks as aborted (unless they're already marked as failed)
-        for (const [taskId, child] of runningTasks.entries()) {
-          const stats = taskStats.get(taskId)
+        // Only tasks that actually started should be marked as aborted
+        // Pending tasks (in waitingQueue) remain with "pending" status
+        for (const [taskId, execution] of runningTasksSnapshot) {
+          const stats = taskStats.get(taskId)!
           // Don't overwrite "failed" status - tasks that failed for specific reasons
           // (like readyTimeout) should remain "failed", not "aborted"
-          if (stats?.status !== "failed") {
+          if (stats.status !== "failed") {
+            const finishedAt = Date.now()
             updateTaskStatus(taskId, {
               status: "aborted",
-              finishedAt: Date.now(),
+              finishedAt,
             })
-            if (stats && stats.startedAt) {
-              stats.durationMs = stats.finishedAt! - stats.startedAt
+            if (stats.startedAt) {
+              stats.durationMs = finishedAt - stats.startedAt
             }
           }
-          try {
-            child.kill("SIGTERM")
-          } catch {}
+          safeKillProcess(execution.process)
         }
 
-        // Stop nested pipelines
-        for (const { stop } of runningPipelines.values()) {
-          try {
-            stop()
-          } catch {}
-        }
+        // Abort all running tasks in queue manager (only tasks that actually started)
+        queueManager.abortAllRunningTasks()
 
         // Execute all teardown commands and wait for them to complete
         // Even if teardowns fail, we still want to reject the pipeline
@@ -205,20 +185,108 @@ export function pipeline(tasks: Task[]): Pipeline {
         completionResolver?.(error)
       }
 
-      const startTask = (task: Task) => {
-        executeTask(task, {
-          spawn: spawnFn,
-          signal,
-          config,
-          graph,
-          runningTasks,
-          runningPipelines,
-          teardownManager,
-          failPipeline,
-          advanceScheduler,
-          updateTaskStatus,
-          taskStats,
-        })
+      // Task execution callbacks for queue-based coordination
+      const taskCallbacks: TaskExecutionCallbacks = {
+        onTaskReady(taskId) {
+          // Task is ready (via readyWhen) - update dependent tasks immediately
+          // Only process ready tasks if pipeline hasn't failed
+          if (!isPipelineFailed()) {
+            queueManager.markRunningTaskReady(taskId)
+            // Process newly ready tasks immediately
+            processReadyTasks()
+          }
+        },
+        onTaskComplete(taskId) {
+          queueManager.markTaskComplete(taskId)
+          // Process newly ready tasks
+          processReadyTasks()
+        },
+        onTaskFailed(taskId, error) {
+          // Set failed flag immediately to prevent race conditions
+          // This prevents processReadyTasks from starting new tasks
+          failed = true
+          queueManager.markTaskFailed(taskId)
+          failPipeline(error as PipelineError)
+        },
+        onTaskSkipped(taskId) {
+          queueManager.markTaskSkipped(taskId)
+          // Process newly ready tasks
+          processReadyTasks()
+        },
+      }
+
+      // Helper to check if pipeline has failed (checks both local flag and queue manager)
+      const isPipelineFailed = (): boolean => {
+        return failed || queueManager.hasFailed()
+      }
+
+      // Helper to safely kill a process (ignores errors if process is already dead)
+      const safeKillProcess = (
+        process?: import("node:child_process").ChildProcess
+      ): void => {
+        try {
+          process?.kill("SIGTERM")
+        } catch {
+          // Process might already be dead, ignore
+        }
+      }
+
+      const startTask = (taskId: string) => {
+        // Don't start new tasks if pipeline has already failed
+        if (isPipelineFailed()) {
+          return
+        }
+
+        const node = graph.nodes.get(taskId)
+        if (!node) return
+
+        const task = node.task
+        const execution = {
+          taskId,
+          taskName: task.name,
+          startedAt: Date.now(),
+        }
+
+        // Final check before marking as running - prevent race conditions
+        if (isPipelineFailed()) {
+          return
+        }
+
+        queueManager.markTaskRunning(taskId, execution)
+        executeTask(task, executionContext, taskCallbacks)
+      }
+
+      const processReadyTasks = () => {
+        // Don't process new tasks if pipeline has already failed
+        if (isPipelineFailed()) return
+
+        // Check if signal is aborted before processing
+        if (signal?.aborted) {
+          failPipeline(new PipelineError("Aborted", PipelineError.Aborted))
+          return
+        }
+
+        // Process all ready tasks up to concurrency limit
+        while (queueManager.canExecuteMore() && !isPipelineFailed()) {
+          const nextTaskId = queueManager.getNextReadyTask()
+          if (!nextTaskId) break
+
+          // Double-check failed status before starting each task
+          if (isPipelineFailed()) break
+
+          startTask(nextTaskId)
+        }
+
+        // Check if execution is complete
+        if (queueManager.isComplete()) {
+          if (queueManager.hasFailed()) {
+            // Pipeline failed - error should have been handled by onTaskFailed
+            return
+          } else {
+            // Pipeline completed successfully
+            completionResolver?.(null)
+          }
+        }
       }
 
       // Initialize signal handler
@@ -230,8 +298,8 @@ export function pipeline(tasks: Task[]): Pipeline {
           new PipelineError(message, PipelineError.ProcessTerminated),
       })
 
-      // 🚀 Kick off initial runnable tasks
-      advanceScheduler()
+      // 🚀 Start processing ready tasks
+      processReadyTasks()
 
       const error = await completionPromise.then(async (err) => {
         // Pipeline completed - execute any remaining teardowns

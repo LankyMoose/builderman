@@ -9,7 +9,7 @@
     "url": "https://github.com/LankyMoose/builderman"
   },
   "scripts": {
-    "test": "node --test ./dist/pipeline.test.js",
+    "test": "node --test ./dist/__tests__/*.test.js",
     "build": "rm -rf dist && tsc",
     "dev": "tsc --watch"
   },

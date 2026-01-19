@@ -36,9 +36,12 @@ export function createSignalHandler({
   // Handle abort signal if provided
   let signalCleanup: (() => void) | null = null
   if (abortSignal) {
-    abortSignal.addEventListener("abort", onAborted)
+    const handleAbort = () => {
+      onAborted()
+    }
+    abortSignal.addEventListener("abort", handleAbort)
     signalCleanup = () => {
-      abortSignal.removeEventListener("abort", onAborted)
+      abortSignal.removeEventListener("abort", handleAbort)
     }
   }
 

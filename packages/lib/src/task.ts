@@ -1,5 +1,5 @@
-import { $TASK_INTERNAL } from "./constants.js"
-import { validateTasks } from "./util.js"
+import { $TASK_INTERNAL } from "./internal/constants.js"
+import { validateTasks } from "./internal/util.js"
 import type { TaskConfig, Task, Commands } from "./types.js"
 
 /**

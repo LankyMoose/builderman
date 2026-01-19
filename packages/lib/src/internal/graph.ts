@@ -1,5 +1,5 @@
 import { $TASK_INTERNAL } from "./constants.js"
-import type { TaskNode, TaskGraph, Task } from "./types.js"
+import type { TaskNode, TaskGraph, Task } from "../types.js"
 
 export function createTaskGraph(tasks: Task[]): TaskGraph {
   const nodes = new Map<string, TaskNode>()

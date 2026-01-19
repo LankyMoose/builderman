@@ -19,7 +19,8 @@ It is designed for monorepos, long-running development processes, and CI/CD pipe
 >   - [Environment Variables](#environment-variables)
 >   - [Dependencies](#dependencies)
 >   - [Pipelines](#pipelines)
->   - [Pipeline Composition](#pipeline-composition)
+>     - [Concurrency Control](#concurrency-control)
+>     - [Pipeline Composition](#pipeline-composition)
 > - [Error Handling Guarantees](#error-handling-guarantees)
 > - [Cancellation](#cancellation)
 > - [Teardown](#teardown)
@@ -255,6 +256,31 @@ const result = await pipeline([libTask, consumerTask]).run({
   },
 })
 ```
+
+#### Concurrency Control
+
+By default, pipelines run as many tasks concurrently as possible (limited only by dependencies). You can limit concurrent execution using `maxConcurrency`:
+
+```ts
+const result = await pipeline([task1, task2, task3, task4, task5]).run({
+  maxConcurrency: 2, // At most 2 tasks will run simultaneously
+})
+```
+
+When `maxConcurrency` is set:
+
+- Tasks that are ready to run (dependencies satisfied) will start up to the limit
+- As tasks complete, new ready tasks will start to maintain the concurrency limit
+- Dependencies are still respected — a task won't start until its dependencies complete
+
+This is useful for:
+
+- Limiting resource usage (CPU, memory, network)
+- Controlling database connection pools
+- Managing API rate limits
+- Reducing system load in CI environments
+
+If `maxConcurrency` is not specified, there is no limit (tasks run concurrently as dependencies allow).
 
 ---
 
