@@ -95,7 +95,7 @@ describe("pipeline", () => {
     assert.strictEqual(result.stats.summary.failed, 1)
 
     // Check task stats
-    const taskStats = Object.values(result.stats.tasks)[0]
+    const taskStats = result.stats.tasks[0]
     assert.strictEqual(taskStats.status, "failed")
     assert.strictEqual(taskStats.exitCode, 1)
     assert.ok(taskStats.error)
@@ -126,7 +126,7 @@ describe("pipeline", () => {
     assert.strictEqual(result.stats.summary.failed, 0)
 
     // Check task stats
-    const taskStats = Object.values(result.stats.tasks)[0]
+    const taskStats = result.stats.tasks[0]
     assert.strictEqual(taskStats.status, "completed")
     assert.strictEqual(taskStats.exitCode, 0)
     assert.ok(taskStats.startedAt)
@@ -496,7 +496,7 @@ describe("pipeline", () => {
     )
 
     // Check task stats
-    const task1Stats = Object.values(result.stats.tasks).find(
+    const task1Stats = result.stats.tasks.find(
       (t) => t.name === "task1"
     )!
     assert.strictEqual(task1Stats.status, "failed")
@@ -550,7 +550,7 @@ describe("pipeline", () => {
     )
 
     // Check task stats
-    const task1Stats = Object.values(result.stats.tasks).find(
+    const task1Stats = result.stats.tasks.find(
       (t) => t.name === "task1"
     )!
     assert.strictEqual(task1Stats.status, "failed")
@@ -710,7 +710,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "success")
 
       // Check teardown status
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
@@ -762,7 +762,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "failed")
 
       // Check teardown status
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
@@ -822,7 +822,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "aborted")
 
       // Check teardown status
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
@@ -869,7 +869,7 @@ describe("pipeline", () => {
       process.env.NODE_ENV = originalEnv
 
       assert.strictEqual(result.ok, true)
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.status, "skipped")
       // Teardown is undefined for skipped tasks (never registered)
       assert.strictEqual(taskStats.teardown, undefined)
@@ -914,7 +914,7 @@ describe("pipeline", () => {
       })
 
       assert.strictEqual(result.ok, false)
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.status, "failed")
       // Teardown is undefined for tasks that failed before starting (never registered)
       assert.strictEqual(taskStats.teardown, undefined)
@@ -1006,7 +1006,7 @@ describe("pipeline", () => {
       )
 
       // Check task2 stats
-      const task2Stats = Object.values(result.stats.tasks).find(
+      const task2Stats = result.stats.tasks.find(
         (t) => t.name === "task2"
       )
       assert.ok(task2Stats)
@@ -1121,7 +1121,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.status, "success")
       assert.strictEqual(result.stats.summary.skipped, 1)
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.status, "skipped")
       assert.strictEqual(taskStats.command, "build")
     })
@@ -1193,7 +1193,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "failed")
 
       // Check task stats
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.status, "failed")
       assert.strictEqual(taskStats.command, "build")
     })
@@ -1225,7 +1225,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.skipped, 1)
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.status, "skipped")
 
       assert.ok(skippedCalled, "onTaskSkipped should be called")
@@ -1272,7 +1272,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.skipped, 1)
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.status, "skipped")
 
       assert.ok(
@@ -1322,7 +1322,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.completed, 1)
-      const taskStats = Object.values(result.stats.tasks)[0]
+      const taskStats = result.stats.tasks[0]
       assert.strictEqual(taskStats.status, "completed")
 
       assert.ok(

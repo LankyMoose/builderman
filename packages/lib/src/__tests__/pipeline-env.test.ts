@@ -234,7 +234,7 @@ describe("environment variables", () => {
     )
 
     // Verify task stats show the correct command
-    const nestedTaskStats = Object.values(result.stats.tasks).find(
+    const nestedTaskStats = result.stats.tasks.find(
       (t) => t.name === "nested"
     )!
     assert.strictEqual(nestedTaskStats.command, "test")

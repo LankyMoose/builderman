@@ -406,11 +406,8 @@ function buildResult(
   const finishedAt = Date.now()
   const durationMs = finishedAt - startedAt
 
-  // Convert task stats map to record
-  const tasks: Record<string, TaskStats> = {}
-  for (const [taskId, stats] of taskStats) {
-    tasks[taskId] = stats
-  }
+  // Convert task stats map to array
+  const tasks: TaskStats[] = Array.from(taskStats.values())
 
   // Calculate summary
   let completed = 0

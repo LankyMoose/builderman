@@ -538,7 +538,7 @@ console.log(result.stats.summary.running)
 Each task provides detailed per-task data:
 
 ```ts
-for (const task of Object.values(result.stats.tasks)) {
+for (const task of result.stats.tasks) {
   console.log(task.name, task.status)
   console.log(task.durationMs)
 
@@ -549,6 +549,13 @@ for (const task of Object.values(result.stats.tasks)) {
 
   if (task.teardown) {
     console.log("Teardown:", task.teardown.status)
+  }
+
+  // when using pipeline.toTask() to convert a pipeline into a task, the task will have subtasks
+  if (task.subtasks) {
+    for (const subtask of task.subtasks) {
+      // ...
+    }
   }
 }
 ```

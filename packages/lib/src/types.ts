@@ -368,9 +368,9 @@ export interface TaskStats {
   /**
    * Statistics for nested tasks when this task represents a pipeline
    * (created via pipeline.toTask()). Only present for pipeline-tasks.
-   * Maps task ID to task statistics for all tasks within the nested pipeline.
+   * Contains statistics for all tasks within the nested pipeline.
    */
-  subtasks?: Record<string, TaskStats>
+  subtasks?: TaskStats[]
 }
 
 /**
@@ -401,10 +401,10 @@ export interface PipelineStats {
    */
   status: "success" | "failed" | "aborted"
   /**
-   * Map of task IDs to their statistics.
+   * Array of task statistics.
    * Contains statistics for all tasks in the pipeline, regardless of their status.
    */
-  tasks: Record<string, TaskStats>
+  tasks: TaskStats[]
   /**
    * Summary of task execution counts.
    */

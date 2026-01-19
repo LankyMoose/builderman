@@ -195,16 +195,14 @@ describe("pipeline <-> task conversion", () => {
     assert.strictEqual(result.stats.status, "success")
 
     // Find the nested task stats
-    const nestedTaskStats = Object.values(result.stats.tasks).find(
+    const nestedTaskStats = result.stats.tasks.find(
       (t) => t.name === "nested"
     )
     assert.ok(nestedTaskStats, "nested task should exist in stats")
     assert.ok(nestedTaskStats.subtasks, "nested task should have subtasks")
 
     // Verify subtasks contain both inner tasks
-    const subtaskNames = Object.values(nestedTaskStats.subtasks!).map(
-      (t) => t.name
-    )
+    const subtaskNames = nestedTaskStats.subtasks!.map((t) => t.name)
     assert.ok(
       subtaskNames.includes("inner-1"),
       "subtasks should include inner-1"
@@ -215,7 +213,7 @@ describe("pipeline <-> task conversion", () => {
     )
 
     // Verify subtask stats are complete
-    const inner1Subtask = Object.values(nestedTaskStats.subtasks!).find(
+    const inner1Subtask = nestedTaskStats.subtasks!.find(
       (t) => t.name === "inner-1"
     )
     assert.ok(inner1Subtask, "inner-1 subtask should exist")
