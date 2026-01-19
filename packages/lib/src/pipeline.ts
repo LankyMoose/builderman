@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { platform } from "node:os"
 
 import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./internal/constants.js"
 import { createTaskGraph } from "./internal/graph.js"
@@ -225,11 +226,70 @@ export function pipeline(tasks: Task[]): Pipeline {
       }
 
       // Helper to safely kill a process (ignores errors if process is already dead)
+      // On Windows with shell:true, we need to kill the entire process tree
       const safeKillProcess = (
         process?: import("node:child_process").ChildProcess
       ): void => {
+        if (!process || !process.pid) return
+
         try {
-          process?.kill("SIGTERM")
+          // On Windows, when using shell:true, we need to kill the process tree
+          // because the shell spawns child processes that won't be killed by just killing the shell
+          if (platform() === "win32") {
+            // Use taskkill to kill the process tree
+            // On Windows with shell:true, the shell spawns child processes that won't be killed
+            // by just killing the shell, so we need to kill the entire process tree
+            const taskkill = spawn("taskkill", [
+              "/PID",
+              process.pid.toString(),
+              "/T", // Kill child processes
+              "/F", // Force kill
+            ])
+            // Don't wait for taskkill to complete, just fire and forget
+            taskkill.on("error", () => {
+              // If taskkill fails (e.g., process already dead), fall back to regular kill
+              try {
+                process.kill("SIGTERM")
+              } catch {
+                // Ignore
+              }
+            })
+            // Suppress stdout/stderr from taskkill
+            taskkill.stdout?.on("data", () => {})
+            taskkill.stderr?.on("data", () => {})
+          } else {
+            // On Unix-like systems, when using shell:true, we need to kill the process tree
+            // because the shell spawns child processes that might not be killed by just killing the shell
+            // Use pkill to kill the process tree (similar to taskkill on Windows)
+            const pkill = spawn("pkill", [
+              "-P", // Kill all child processes of this PID
+              process.pid.toString(),
+              "-TERM", // Send SIGTERM first (graceful)
+            ])
+            // Also kill the parent process itself
+            try {
+              process.kill("SIGTERM")
+            } catch {
+              // Parent might already be dead, ignore
+            }
+            // If pkill fails (e.g., not available or process already dead), fall back to regular kill
+            pkill.on("error", () => {
+              // Fall back to regular kill if pkill is not available
+              try {
+                process.kill("SIGTERM")
+              } catch {
+                // If SIGTERM fails, try SIGKILL
+                try {
+                  process.kill("SIGKILL")
+                } catch {
+                  // Process might already be dead, ignore
+                }
+              }
+            })
+            // Suppress stdout/stderr from pkill
+            pkill.stdout?.on("data", () => {})
+            pkill.stderr?.on("data", () => {})
+          }
         } catch {
           // Process might already be dead, ignore
         }
@@ -299,7 +359,9 @@ export function pipeline(tasks: Task[]): Pipeline {
         onAborted: () =>
           failPipeline(new PipelineError("Aborted", PipelineError.Aborted)),
         onProcessTerminated: (message) =>
-          new PipelineError(message, PipelineError.ProcessTerminated),
+          failPipeline(
+            new PipelineError(message, PipelineError.ProcessTerminated)
+          ),
       })
 
       // 🚀 Start processing ready tasks
