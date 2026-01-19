@@ -157,7 +157,8 @@ describe("pipeline <-> task conversion", () => {
       onTaskBegin: (name) => executionOrder.push(`begin:${name}`),
       onTaskReady: (name) => executionOrder.push(`ready:${name}`),
       onTaskComplete: (name) => executionOrder.push(`complete:${name}`),
-      onTaskSkipped: (name, _id, mode) => executionOrder.push(`skip:${name}:${mode}`),
+      onTaskSkipped: (name, _id, mode) =>
+        executionOrder.push(`skip:${name}:${mode}`),
     })
 
     // We abort intentionally; the important part is that the dependent started.
