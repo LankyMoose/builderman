@@ -330,19 +330,10 @@ function executeRegularTask(
 
   let didMarkReady = false
 
-  if (!readyWhen) {
-    // For tasks without readyWhen, mark as ready after a microtask
-    // This ensures the task has actually started before we update dependents
-    // This prevents race conditions where a task fails immediately after starting
-    setImmediate(() => {
-      // Check if task hasn't failed before marking as ready
-      const currentStats = context.taskStats.get(taskId)
-      if (currentStats?.status !== "failed" && !context.isAborted()) {
-        callbacks.onTaskReady(taskId)
-        didMarkReady = true
-      }
-    })
-  } else if (readyTimeout !== Infinity) {
+  // For tasks without readyWhen, we wait for the process to exit successfully
+  // before allowing dependent tasks to start. This ensures dependencies are
+  // fully completed before dependents begin execution.
+  if (readyWhen && readyTimeout !== Infinity) {
     // Set up timeout for readyWhen condition using TimeoutManager
     timeoutManager.setReadyTimeout(taskId, readyTimeout, () => {
       if (!didMarkReady) {

@@ -208,8 +208,12 @@ describe("pipeline", () => {
     )
   })
 
-  it("starts dependent task immediately when task has no isReady", async () => {
+  it("waits for dependency to complete when task has no readyWhen", async () => {
     const executionOrder: string[] = []
+    const task1StartTime: number[] = []
+    const task1CompleteTime: number[] = []
+    const task2StartTime: number[] = []
+
     const task1 = task({
       name: "task1",
       commands: { dev: "echo task1", build: "echo task1" },
@@ -237,7 +241,20 @@ describe("pipeline", () => {
     const result = await pipe.run({
       spawn: mockSpawn as any,
       onTaskBegin: (name) => {
+        const timestamp = Date.now()
         executionOrder.push(`${name}:started`)
+        if (name === "task1") {
+          task1StartTime.push(timestamp)
+        } else if (name === "task2") {
+          task2StartTime.push(timestamp)
+        }
+      },
+      onTaskComplete: (name) => {
+        const timestamp = Date.now()
+        executionOrder.push(`${name}:completed`)
+        if (name === "task1") {
+          task1CompleteTime.push(timestamp)
+        }
       },
     })
 
@@ -245,12 +262,24 @@ describe("pipeline", () => {
 
     // task1 should start first
     assert.strictEqual(executionOrder.indexOf("task1:started"), 0)
-    // task2 should start immediately after task1 (no waiting for ready or completion)
-    // Since task1 has no isReady, it's marked as ready immediately when it starts,
-    // so task2 should start right away
+    // task1 should complete before task2 starts
+    // When there's no readyWhen, dependent tasks must wait for the dependency to exit successfully
+    const task1CompletedIndex = executionOrder.indexOf("task1:completed")
     const task2StartedIndex = executionOrder.indexOf("task2:started")
-    // task2 should start very soon after task1 (they should be close in execution order)
-    assert.ok(task2StartedIndex === 1, "task2 should start after task1")
+
+    assert.ok(
+      task1CompletedIndex < task2StartedIndex,
+      "task1 should complete before task2 starts when there's no readyWhen"
+    )
+
+    // Verify timing: task2 should start after task1 completes (allowing some timing variance)
+    if (task1CompleteTime.length > 0 && task2StartTime.length > 0) {
+      const timeDiff = task2StartTime[0] - task1CompleteTime[0]
+      assert.ok(
+        timeDiff >= -10, // Allow 10ms variance for async scheduling
+        `task2 should start after task1 completes. task1 completed at ${task1CompleteTime[0]}, task2 started at ${task2StartTime[0]}, diff: ${timeDiff}ms`
+      )
+    }
   })
 
   it("starts multiple dependents when task with isReady becomes ready", async () => {
@@ -1333,7 +1362,10 @@ describe("pipeline", () => {
         maxConcurrency: 2, // Limit to 2 concurrent tasks
         onTaskBegin: (name) => {
           currentConcurrentTasks++
-          maxConcurrentTasks = Math.max(maxConcurrentTasks, currentConcurrentTasks)
+          maxConcurrentTasks = Math.max(
+            maxConcurrentTasks,
+            currentConcurrentTasks
+          )
           taskStartTimes.set(name, Date.now())
         },
         onTaskComplete: (name) => {
@@ -1355,7 +1387,11 @@ describe("pipeline", () => {
       )
 
       // Verify all tasks started and completed
-      assert.strictEqual(taskStartTimes.size, 5, "All 5 tasks should have started")
+      assert.strictEqual(
+        taskStartTimes.size,
+        5,
+        "All 5 tasks should have started"
+      )
       assert.strictEqual(
         taskCompleteTimes.size,
         5,
@@ -1424,7 +1460,10 @@ describe("pipeline", () => {
         // maxConcurrency not set - should allow unlimited
         onTaskBegin: (name) => {
           currentConcurrentTasks++
-          maxConcurrentTasks = Math.max(maxConcurrentTasks, currentConcurrentTasks)
+          maxConcurrentTasks = Math.max(
+            maxConcurrentTasks,
+            currentConcurrentTasks
+          )
           taskStartTimes.set(name, Date.now())
         },
         onTaskComplete: () => {
@@ -1496,7 +1535,10 @@ describe("pipeline", () => {
         maxConcurrency: 2,
         onTaskBegin: (name) => {
           currentConcurrentTasks++
-          maxConcurrentTasks = Math.max(maxConcurrentTasks, currentConcurrentTasks)
+          maxConcurrentTasks = Math.max(
+            maxConcurrentTasks,
+            currentConcurrentTasks
+          )
           taskStartTimes.set(name, Date.now())
         },
         onTaskComplete: () => {
@@ -1522,14 +1564,29 @@ describe("pipeline", () => {
       const task3StartTime = taskStartTimes.get("task3")!
       const task4StartTime = taskStartTimes.get("task4")!
 
-      assert.ok(task1StartTime < task2StartTime, "task1 should start before task2")
-      assert.ok(task1StartTime < task3StartTime, "task1 should start before task3")
-      assert.ok(task1StartTime < task4StartTime, "task1 should start before task4")
+      assert.ok(
+        task1StartTime < task2StartTime,
+        "task1 should start before task2"
+      )
+      assert.ok(
+        task1StartTime < task3StartTime,
+        "task1 should start before task3"
+      )
+      assert.ok(
+        task1StartTime < task4StartTime,
+        "task1 should start before task4"
+      )
 
       // Verify that task2, task3, task4 start in batches of 2
       // Two should start at roughly the same time, then the third after one completes
-      const dependentStartTimes = [task2StartTime, task3StartTime, task4StartTime].sort()
-      const firstTwoDiff = Math.abs(dependentStartTimes[0] - dependentStartTimes[1])
+      const dependentStartTimes = [
+        task2StartTime,
+        task3StartTime,
+        task4StartTime,
+      ].sort()
+      const firstTwoDiff = Math.abs(
+        dependentStartTimes[0] - dependentStartTimes[1]
+      )
       assert.ok(
         firstTwoDiff < 50,
         `First 2 dependent tasks should start at roughly the same time (diff: ${firstTwoDiff}ms)`
@@ -1538,7 +1595,8 @@ describe("pipeline", () => {
       // The third dependent task should start after one of the first two completes
       // (allowing some timing variance for async scheduling)
       // Since tasks take 30ms to complete, the third should start at least ~30ms after the first
-      const timeBetweenSecondAndThird = dependentStartTimes[2] - dependentStartTimes[1]
+      const timeBetweenSecondAndThird =
+        dependentStartTimes[2] - dependentStartTimes[1]
       assert.ok(
         timeBetweenSecondAndThird >= -10,
         `Third dependent task should start after one of the first two completes (diff: ${timeBetweenSecondAndThird}ms)`
