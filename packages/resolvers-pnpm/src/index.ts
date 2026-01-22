@@ -3,6 +3,7 @@ import type { InputResolver, ResolveContext, ResolvedInput } from "builderman"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { createHash } from "node:crypto"
+import { parse as parseYaml } from "yaml"
 
 /**
  * Options for pnpm.package() resolver.
@@ -18,33 +19,32 @@ export interface PnpmPackageOptions {
 }
 
 /**
- * Simple YAML parser for pnpm-lock.yaml structure.
- * pnpm-lock.yaml is often JSON-compatible, so we try JSON first.
- * Falls back to a basic parser for YAML-specific syntax.
+ * Parses pnpm-lock.yaml file.
+ * Handles both JSON and YAML formats (pnpm can generate either).
  */
 function parseYamlLockfile(content: string): any {
-  // Try parsing as JSON first (pnpm often generates JSON-compatible lockfiles)
+  // Try parsing as JSON first (some pnpm versions generate JSON-compatible lockfiles)
   try {
     return JSON.parse(content)
   } catch {
-    // Fall back to basic YAML parsing
-    return parseBasicYaml(content)
+    // If JSON parsing fails, parse as YAML
+    try {
+      return parseYaml(content, {
+        // Use strict mode to ensure consistent parsing
+        strict: true,
+        // Keep source information for better error messages
+        keepSourceTokens: false,
+        // Parse numbers as numbers (not strings)
+        intAsBigInt: false,
+      })
+    } catch (error) {
+      throw new Error(
+        `Failed to parse pnpm-lock.yaml: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
   }
-}
-
-/**
- * Basic YAML parser for pnpm-lock.yaml.
- * This is a minimal parser that handles the structure we need.
- * Note: Modern pnpm uses YAML format. This is a simplified parser.
- * For production use, consider using a YAML library like 'yaml' or 'js-yaml'.
- */
-function parseBasicYaml(_content: string): any {
-  // For now, throw an error - proper YAML parsing requires a library
-  // Most pnpm lockfiles are JSON-compatible, but if not, we need a YAML parser
-  throw new Error(
-    "pnpm-lock.yaml is not JSON-compatible. " +
-      "Please install a YAML parser library (e.g., 'yaml' or 'js-yaml') or ensure your lockfile is in JSON format."
-  )
 }
 
 /**
