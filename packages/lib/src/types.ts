@@ -193,8 +193,10 @@ export interface TaskConfig<T extends Commands = Commands> {
 interface TaskInternal extends TaskConfig {
   id: string
   cwd: string
+  dependencies: Task[]
   env: Record<string, string>
-  pipeline?: Pipeline // If set, this task represents a nested pipeline
+  // If set, this task represents a nested pipeline created via pipeline.toTask()
+  pipeline?: Pipeline
   commands: CommandsInternal
 }
 

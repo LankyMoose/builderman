@@ -56,7 +56,7 @@ describe("stats field validation", () => {
       const pipe = pipeline([task1])
       const result = await pipe.run({ spawn: mockSpawn as any })
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
 
       // Required fields
       assert.strictEqual(typeof taskStats.id, "string")
@@ -108,7 +108,7 @@ describe("stats field validation", () => {
       const pipe = pipeline([task1])
       const result = await pipe.run({ spawn: mockSpawn as any })
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
 
       assert.ok(taskStats.teardown !== undefined)
       assert.ok(
@@ -139,7 +139,7 @@ describe("stats field validation", () => {
       assert.strictEqual(result.stats.summary.completed, 0)
 
       // Verify TaskStats for failed task
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "failed")
       assert.ok(taskStats.error instanceof Error)
       assert.strictEqual(typeof taskStats.exitCode, "number")
@@ -162,7 +162,7 @@ describe("stats field validation", () => {
 
       assert.strictEqual(result.ok, false)
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "failed")
       assert.ok(taskStats.error instanceof Error)
       assert.strictEqual(typeof taskStats.command, "string")
@@ -198,7 +198,7 @@ describe("stats field validation", () => {
 
       assert.strictEqual(result.ok, false)
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "failed")
       assert.strictEqual(taskStats.signal, "SIGTERM")
       assert.strictEqual(taskStats.exitCode, undefined) // null exit code when terminated by signal
@@ -215,10 +215,10 @@ describe("stats field validation", () => {
       })
       const task2 = task({
         name: "task2",
-      commands: {
-        dev: { run: "sleep 1", dependencies: [task1] },
-        build: { run: "sleep 1", dependencies: [task1] },
-      },
+        commands: {
+          dev: { run: "sleep 1", dependencies: [task1] },
+          build: { run: "sleep 1", dependencies: [task1] },
+        },
       })
 
       const mockSpawn = mock.fn((_cmd: string, _args: string[] = []) => {
@@ -299,7 +299,7 @@ describe("stats field validation", () => {
         signal: abortController.signal,
       })
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.ok(["aborted", "failed"].includes(taskStats.status))
       assert.ok(
         taskStats.startedAt !== undefined,
@@ -344,7 +344,7 @@ describe("stats field validation", () => {
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.skipped, 1)
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "skipped")
       assert.strictEqual(taskStats.command, "build")
       assert.strictEqual(typeof taskStats.finishedAt, "number")
@@ -495,7 +495,7 @@ describe("stats field validation", () => {
       // Pipeline still succeeds even if teardown fails
       assert.strictEqual(result.ok, true)
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.ok(taskStats.teardown !== undefined)
       assert.strictEqual(taskStats.teardown!.status, "failed")
       assert.ok(taskStats.teardown!.error instanceof Error)
@@ -511,7 +511,7 @@ describe("stats field validation", () => {
       const pipe = pipeline([task1])
       const result = await pipe.run({ spawn: mockSpawn as any })
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.teardown, undefined)
     })
   })

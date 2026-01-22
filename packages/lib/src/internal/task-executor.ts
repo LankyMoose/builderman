@@ -125,8 +125,10 @@ function executeNestedPipeline(
   // Create an abort controller to stop the nested pipeline if needed
   let pipelineStopped = false
 
+  const taskInternal = task[$TASK_INTERNAL]
+
   // Merge environment variables: pipeline.env -> task.env (from pipeline.toTask config)
-  const taskEnv = task[$TASK_INTERNAL].env
+  const taskEnv = taskInternal.env
   const pipelineEnv = config?.env ?? {}
   const mergedEnv = {
     ...pipelineEnv,
@@ -139,12 +141,12 @@ function executeNestedPipeline(
     // We need to wait for all root tasks to be ready/complete/skipped before marking
     // the outer task as ready. This ensures dependents don't start until all root
     // tasks in the nested pipeline are ready.
-    // 
+    //
     // We need to be careful about race conditions: a root task might become ready
     // before another root task has begun. To handle this, we must wait until we've
     // seen all expected root tasks begin before we can safely check if they're all ready.
     const expectedRootTaskCount = rootTaskNames.size
-    
+
     // Don't check readiness until we've seen all expected root tasks begin
     // (some might be excluded, but we'll handle that by checking if we've seen
     // enough tasks or if the pipeline has progressed enough)
@@ -152,7 +154,7 @@ function executeNestedPipeline(
       // Haven't seen any root tasks yet - wait
       return
     }
-    
+
     // Critical: We must wait until we've seen ALL expected root tasks begin
     // before we can safely check if they're all ready. This prevents race conditions
     // where one root task becomes ready before another has begun.
@@ -160,7 +162,7 @@ function executeNestedPipeline(
       // Haven't seen all root tasks begin yet - wait for them
       return
     }
-    
+
     // Now that we've seen all root tasks begin, check if they're all ready/complete/skipped
     // We must verify that EVERY root task that has begun is also ready/complete/skipped
     // This is critical: we cannot mark the nested task as ready until ALL root tasks are ready
@@ -173,7 +175,7 @@ function executeNestedPipeline(
         break
       }
     }
-    
+
     // Only mark as ready if:
     // 1. All root tasks that have begun are ready/complete/skipped
     // 2. We've seen all expected root tasks begin
@@ -194,12 +196,12 @@ function executeNestedPipeline(
 
   // Get task-level dependencies of the pipeline task to exclude from nested graph
   // These dependencies are already satisfied by the outer pipeline
-  const anyInternal = task[$TASK_INTERNAL] as any
-  const pipelineDeps: Task[] | undefined = anyInternal.__pipelineDeps
-  const excludeTasks = pipelineDeps ? new Set(pipelineDeps) : undefined
+  const excludeTasks = taskInternal.pipeline
+    ? new Set(taskInternal.dependencies)
+    : undefined
 
   // Get root tasks from the nested pipeline to track when they're all ready
-  const nestedPipelineInternal = (nestedPipeline as any)[$PIPELINE_INTERNAL]
+  const nestedPipelineInternal = nestedPipeline[$PIPELINE_INTERNAL]
   const rootTasks = nestedPipelineInternal?.tasks ?? []
   const rootTaskNames = new Set(
     rootTasks.map((t: Task) => t[$TASK_INTERNAL].name)
@@ -1051,8 +1053,8 @@ function snapshotsEqual(a: Snapshot, b: Snapshot): boolean {
   if (a.outputs.length !== b.outputs.length) return false
 
   for (let i = 0; i < a.inputs.length; i++) {
-    const fa = a.inputs[i]
-    const fb = b.inputs[i]
+    const fa = a.inputs[i]!
+    const fb = b.inputs[i]!
     if (
       fa.path !== fb.path ||
       fa.mtimeMs !== fb.mtimeMs ||
@@ -1063,8 +1065,8 @@ function snapshotsEqual(a: Snapshot, b: Snapshot): boolean {
   }
 
   for (let i = 0; i < a.outputs.length; i++) {
-    const fa = a.outputs[i]
-    const fb = b.outputs[i]
+    const fa = a.outputs[i]!
+    const fb = b.outputs[i]!
     if (
       fa.path !== fb.path ||
       fa.mtimeMs !== fb.mtimeMs ||

@@ -19,19 +19,13 @@ import type { InputResolver } from "./resolvers/types.js"
 export function task<T extends Commands = Commands>(
   config: TaskConfig<T>
 ): Task<T> {
-  const {
-    name,
-    commands,
-    cwd = ".",
-    dependencies = [],
-    env,
-    allowSkip,
-  } = config
+  const { name, commands, cwd = ".", dependencies, env, allowSkip } = config
 
   const taskId = randomUUID()
+  const dependenciesClone = [...(dependencies ?? [])]
 
   // Validate task dependencies
-  validateTasks(dependencies)
+  validateTasks(dependenciesClone)
 
   // We'll create the task object first (with a placeholder) so we can reference it
   // in command() and artifact() methods
@@ -158,7 +152,7 @@ export function task<T extends Commands = Commands>(
 
   // Process task-level dependencies: automatically add command-level dependencies
   // for matching command names
-  for (const depTask of dependencies) {
+  for (const depTask of dependenciesClone) {
     const depCommands = depTask[$TASK_INTERNAL].commands
     const depCommandNames = Object.keys(depCommands)
 
@@ -236,6 +230,7 @@ export function task<T extends Commands = Commands>(
       allowSkip,
       id: taskId,
       commands: commandsClone,
+      dependencies: dependenciesClone,
     },
   }
 

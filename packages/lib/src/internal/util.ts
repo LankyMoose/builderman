@@ -32,7 +32,7 @@ export function parseCommandLine(command: string): {
   let quoteChar: '"' | "'" | null = null
 
   for (let i = 0; i < command.length; i++) {
-    const ch = command[i]
+    const ch = command[i]!
 
     if (ch === '"' || ch === "'") {
       if (!inQuotes) {
@@ -71,8 +71,7 @@ export function parseCommandLine(command: string): {
     throw new Error(`Invalid command: "${command}"`)
   }
 
-  const [cmd, ...args] = tokens
-  return { cmd, args }
+  return { cmd: tokens[0]!, args: tokens.slice(1) }
 }
 
 /**

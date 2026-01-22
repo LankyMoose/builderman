@@ -23,8 +23,8 @@ describe("pipeline", () => {
       },
     })
     // Create circular dependency via command-level deps
-    const task1Dev = task1[$TASK_INTERNAL].commands["dev"]
-    const task1Build = task1[$TASK_INTERNAL].commands["build"]
+    const task1Dev = task1[$TASK_INTERNAL].commands["dev"]!
+    const task1Build = task1[$TASK_INTERNAL].commands["build"]!
     task1Dev.commandRefDependencies = [
       { taskId: task2[$TASK_INTERNAL].id, command: "dev" },
     ]
@@ -190,7 +190,7 @@ describe("pipeline", () => {
     assert.strictEqual(result.stats.summary.failed, 1)
 
     // Check task stats
-    const taskStats = result.stats.tasks[0]
+    const taskStats = result.stats.tasks[0]!
     assert.strictEqual(taskStats.status, "failed")
     assert.strictEqual(taskStats.exitCode, 1)
     assert.ok(taskStats.error)
@@ -221,7 +221,7 @@ describe("pipeline", () => {
     assert.strictEqual(result.stats.summary.failed, 0)
 
     // Check task stats
-    const taskStats = result.stats.tasks[0]
+    const taskStats = result.stats.tasks[0]!
     assert.strictEqual(taskStats.status, "completed")
     assert.strictEqual(taskStats.exitCode, 0)
     assert.ok(taskStats.startedAt)
@@ -374,7 +374,7 @@ describe("pipeline", () => {
 
     // Verify timing: task2 should start after task1 completes (allowing some timing variance)
     if (task1CompleteTime.length > 0 && task2StartTime.length > 0) {
-      const timeDiff = task2StartTime[0] - task1CompleteTime[0]
+      const timeDiff = task2StartTime[0]! - task1CompleteTime[0]!
       assert.ok(
         timeDiff >= -10, // Allow 10ms variance for async scheduling
         `task2 should start after task1 completes. task1 completed at ${task1CompleteTime[0]}, task2 started at ${task2StartTime[0]}, diff: ${timeDiff}ms`
@@ -824,7 +824,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "success")
 
       // Check teardown status
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
@@ -876,7 +876,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "failed")
 
       // Check teardown status
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
@@ -937,7 +937,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "aborted")
 
       // Check teardown status
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.teardown?.status, "completed")
 
       assert.ok(
@@ -984,7 +984,7 @@ describe("pipeline", () => {
       process.env.NODE_ENV = originalEnv
 
       assert.strictEqual(result.ok, true)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "skipped")
       // Teardown is undefined for skipped tasks (never registered)
       assert.strictEqual(taskStats.teardown, undefined)
@@ -1029,7 +1029,7 @@ describe("pipeline", () => {
       })
 
       assert.strictEqual(result.ok, false)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "failed")
       // Teardown is undefined for tasks that failed before starting (never registered)
       assert.strictEqual(taskStats.teardown, undefined)
@@ -1240,7 +1240,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.status, "success")
       assert.strictEqual(result.stats.summary.skipped, 1)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "skipped")
       assert.strictEqual(taskStats.command, "build")
     })
@@ -1317,7 +1317,7 @@ describe("pipeline", () => {
       assert.strictEqual(result.stats.status, "failed")
 
       // Check task stats
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "failed")
       assert.strictEqual(taskStats.command, "build")
     })
@@ -1349,7 +1349,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.skipped, 1)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "skipped")
 
       assert.ok(skippedCalled, "onTaskSkipped should be called")
@@ -1396,7 +1396,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.skipped, 1)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "skipped")
 
       assert.ok(
@@ -1446,7 +1446,7 @@ describe("pipeline", () => {
 
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.completed, 1)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "completed")
 
       assert.ok(
@@ -1532,7 +1532,7 @@ describe("pipeline", () => {
       const completeTimes = Array.from(taskCompleteTimes.values()).sort()
 
       // The first 2 tasks should start at roughly the same time
-      const firstBatchStartDiff = Math.abs(startTimes[0] - startTimes[1])
+      const firstBatchStartDiff = Math.abs(startTimes[0]! - startTimes[1]!)
       assert.ok(
         firstBatchStartDiff < 10,
         "First 2 tasks should start at roughly the same time"
@@ -1540,16 +1540,16 @@ describe("pipeline", () => {
 
       // The 3rd task should start after one of the first 2 completes
       // (allowing some timing variance)
-      const firstCompleteTime = completeTimes[0]
-      const thirdStartTime = startTimes[2]
+      const firstCompleteTime = completeTimes[0]!
+      const thirdStartTime = startTimes[2]!
       assert.ok(
         thirdStartTime >= firstCompleteTime - 10,
         "3rd task should start after first task completes"
       )
 
       // The 5th task should start after the 3rd completes
-      const thirdCompleteTime = completeTimes[2]
-      const fifthStartTime = startTimes[4]
+      const thirdCompleteTime = completeTimes[2]!
+      const fifthStartTime = startTimes[4]!
       assert.ok(
         fifthStartTime >= thirdCompleteTime - 10,
         "5th task should start after 3rd task completes"
@@ -1608,7 +1608,7 @@ describe("pipeline", () => {
 
       // All tasks should start at roughly the same time
       const startTimes = Array.from(taskStartTimes.values()).sort()
-      const timeSpan = startTimes[4] - startTimes[0]
+      const timeSpan = startTimes[4]! - startTimes[0]!
       assert.ok(
         timeSpan < 20,
         "All tasks should start within a short time span when concurrency is unlimited"
@@ -1715,7 +1715,7 @@ describe("pipeline", () => {
         task4StartTime,
       ].sort()
       const firstTwoDiff = Math.abs(
-        dependentStartTimes[0] - dependentStartTimes[1]
+        dependentStartTimes[0]! - dependentStartTimes[1]!
       )
       assert.ok(
         firstTwoDiff < 50,
@@ -1726,7 +1726,7 @@ describe("pipeline", () => {
       // (allowing some timing variance for async scheduling)
       // Since tasks take 30ms to complete, the third should start at least ~30ms after the first
       const timeBetweenSecondAndThird =
-        dependentStartTimes[2] - dependentStartTimes[1]
+        dependentStartTimes[2]! - dependentStartTimes[1]!
       assert.ok(
         timeBetweenSecondAndThird >= -10,
         `Third dependent task should start after one of the first two completes (diff: ${timeBetweenSecondAndThird}ms)`

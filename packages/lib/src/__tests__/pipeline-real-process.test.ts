@@ -32,7 +32,7 @@ describe("pipeline (real processes)", () => {
     }
     assert.strictEqual(result.ok, true)
     assert.strictEqual(result.stats.status, "success")
-    const taskStats = result.stats.tasks[0]
+    const taskStats = result.stats.tasks[0]!
     assert.strictEqual(taskStats.status, "completed")
     assert.strictEqual(taskStats.exitCode, 0)
   })
@@ -54,7 +54,7 @@ describe("pipeline (real processes)", () => {
     assert.strictEqual(result.ok, false)
     assert.ok(result.error)
     assert.strictEqual(result.error.code, PipelineError.TaskFailed)
-    const taskStats = result.stats.tasks[0]
+    const taskStats = result.stats.tasks[0]!
     assert.strictEqual(taskStats.status, "failed")
     assert.strictEqual(taskStats.exitCode, 1)
   })
@@ -136,7 +136,7 @@ describe("pipeline (real processes)", () => {
     assert.strictEqual(result.error.code, PipelineError.Aborted)
     assert.strictEqual(result.stats.status, "aborted")
 
-    const taskStats = result.stats.tasks[0]
+    const taskStats = result.stats.tasks[0]!
     // Task should have started and then been aborted/failed due to cancellation
     assert.ok(
       taskStats.status === "aborted" || taskStats.status === "failed",

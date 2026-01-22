@@ -1,20 +1,6 @@
 import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
 import { PipelineError } from "../errors.js"
-import type {
-  TaskNode,
-  TaskGraph,
-  Task,
-  Artifact,
-  CommandCacheConfig,
-  Pipeline,
-} from "../types.js"
-
-/**
- * Internal cache config with artifacts separated from inputs.
- */
-type InternalCacheConfig = CommandCacheConfig & {
-  artifacts?: Artifact[]
-}
+import type { TaskNode, TaskGraph, Task, Pipeline } from "../types.js"
 
 /**
  * Creates a task graph from root tasks, including all transitive dependencies.
@@ -37,16 +23,19 @@ export function createTaskGraph(
   // Build a map of tasks to their containing nested pipeline tasks
   // This helps us detect when a task is inside a nested pipeline
   const taskToNestedPipeline = new Map<Task, Task>()
-  const collectNestedPipelineTasks = (task: Task): void => {
-    const internal = task[$TASK_INTERNAL]
-    const nestedPipeline: Pipeline | undefined = internal.pipeline
-    if (nestedPipeline) {
-      // This task is a nested pipeline - map its inner tasks to it
-      const innerTasks = nestedPipeline[$PIPELINE_INTERNAL].tasks
-      for (const innerTask of innerTasks) {
-        taskToNestedPipeline.set(innerTask, task)
-        // Recursively check if inner tasks are also nested pipelines
-        collectNestedPipelineTasks(innerTask)
+  const collectNestedPipelineTasks = (
+    task: Task,
+    nestedPipeline: Pipeline
+  ): void => {
+    // This task is a nested pipeline - map its inner tasks to it
+    const innerTasks = nestedPipeline[$PIPELINE_INTERNAL].tasks
+    for (const innerTask of innerTasks) {
+      taskToNestedPipeline.set(innerTask, task)
+
+      // Also check if inner tasks have nested pipelines
+      const nestedPipeline = innerTask[$TASK_INTERNAL].pipeline
+      if (nestedPipeline) {
+        collectNestedPipelineTasks(innerTask, nestedPipeline)
       }
     }
   }
@@ -54,15 +43,15 @@ export function createTaskGraph(
   // First pass: collect all nested pipeline relationships from root tasks
   // We need to check all root tasks and their nested pipelines recursively
   const checkTaskForNestedPipelines = (task: Task): void => {
-    collectNestedPipelineTasks(task)
-    // Also check if this task's dependencies have nested pipelines
     const internal = task[$TASK_INTERNAL]
-    const anyInternal = internal as any
-    const pipelineDeps: Task[] | undefined = anyInternal.__pipelineDeps
-    if (pipelineDeps) {
-      for (const dep of pipelineDeps) {
-        checkTaskForNestedPipelines(dep)
-      }
+    if (!internal.pipeline) {
+      return
+    }
+
+    collectNestedPipelineTasks(task, internal.pipeline)
+    // Also check if this task's dependencies have nested pipelines
+    for (const dep of internal.dependencies) {
+      checkTaskForNestedPipelines(dep)
     }
   }
 
@@ -73,50 +62,27 @@ export function createTaskGraph(
   // Helper to get dependencies for a task
   const getTaskDependencies = (task: Task): Task[] => {
     const internal = task[$TASK_INTERNAL]
-    const deps = new Set<Task>()
-
-    // Check for pipeline-level dependencies (for nested pipeline tasks)
-    const anyInternal = internal as any
-    const pipelineDeps: Task[] | undefined = anyInternal.__pipelineDeps
-    if (pipelineDeps) {
-      for (const dep of pipelineDeps) {
-        if (dep !== task) {
-          deps.add(dep)
-        }
-      }
-    }
+    const deps = new Set<Task>(internal.dependencies)
 
     // Check for command-level dependencies (only Tasks now)
-    const commands = internal.commands as import("../types.js").Commands
-    const cmdConfig = commands[command]
-    if (cmdConfig && typeof cmdConfig !== "string") {
-      // Get dependencies directly from the command config
-      // These are stored as Task objects
-      const commandDeps = cmdConfig.dependencies || []
-      for (const dep of commandDeps) {
-        // It's a Task - add it directly
-        const taskDep = dep as Task
-        if (taskDep !== task) {
-          deps.add(taskDep)
-        }
+    const commandConfig = internal.commands[command]
+    if (commandConfig) {
+      // Get dependencies directly from the command config if it exists
+      for (const dep of commandConfig?.dependencies || []) {
+        deps.add(dep)
       }
 
       // Check for artifacts in cache config - these also create execution dependencies
       // Artifacts are inputs, but we still need to ensure the producing task completes first
-      const cacheConfig = cmdConfig.cache as InternalCacheConfig | undefined
-      if (cacheConfig && cacheConfig.artifacts) {
-        for (const artifact of cacheConfig.artifacts) {
-          if (artifact.task !== task) {
-            // If the artifact's task is inside a nested pipeline, depend on the nested pipeline instead
-            const nestedPipelineTask = taskToNestedPipeline.get(artifact.task)
-            if (nestedPipelineTask) {
-              // The artifact task is inside a nested pipeline - depend on the nested pipeline task
-              deps.add(nestedPipelineTask)
-            } else {
-              // Not in a nested pipeline - depend on the task directly
-              deps.add(artifact.task)
-            }
-          }
+      for (const artifact of commandConfig?.cache?.artifacts || []) {
+        // If the artifact's task is inside a nested pipeline, depend on the nested pipeline instead
+        const nestedPipelineTask = taskToNestedPipeline.get(artifact.task)
+        if (nestedPipelineTask) {
+          // The artifact task is inside a nested pipeline - depend on the nested pipeline task
+          deps.add(nestedPipelineTask)
+        } else {
+          // Not in a nested pipeline - depend on the task directly
+          deps.add(artifact.task)
         }
       }
     }

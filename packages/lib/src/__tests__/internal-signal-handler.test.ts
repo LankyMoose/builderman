@@ -61,7 +61,7 @@ describe("createSignalHandler", () => {
 
       // Simulate a signal by invoking the stored handler
       const sig = "SIGINT"
-      registered[sig][0]()
+      registered[sig]![0]!()
 
       assert.strictEqual(messages.length, 1)
       assert.strictEqual(messages[0], `Received ${sig}`)

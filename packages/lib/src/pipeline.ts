@@ -24,6 +24,9 @@ export function pipeline(tasks: Task[]): Pipeline {
     },
 
     toTask({ name, dependencies, env }): Task {
+      const dependenciesClone = [...(dependencies || [])]
+      validateTasks(dependenciesClone)
+
       // For nested pipelines, we still support task-level dependencies
       // since the synthetic task has no commands. These will be used
       // when the nested pipeline task is used as a dependency.
@@ -31,13 +34,8 @@ export function pipeline(tasks: Task[]): Pipeline {
         name,
         commands: {},
         env,
+        dependencies: dependenciesClone,
       })
-
-      // Store dependencies internally for graph building
-      if (dependencies && dependencies.length > 0) {
-        validateTasks(dependencies)
-        ;(syntheticTask[$TASK_INTERNAL] as any).__pipelineDeps = dependencies
-      }
 
       // Mark this task as a pipeline task so it can be detected by the executor
       syntheticTask[$TASK_INTERNAL].pipeline = pipelineImpl

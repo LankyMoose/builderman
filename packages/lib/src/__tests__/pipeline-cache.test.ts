@@ -61,7 +61,7 @@ describe("cache", () => {
         })
 
         assert.strictEqual(second.ok, true)
-        const taskStats = second.stats.tasks[0]
+        const taskStats = second.stats.tasks[0]!
         assert.strictEqual(taskStats.status, "skipped")
         assert.strictEqual(second.stats.summary.skipped, 1)
 
@@ -271,7 +271,7 @@ describe("cache", () => {
         )
 
         // Verify task stats show empty outputs
-        const firstTaskStats = first.stats.tasks[0]
+        const firstTaskStats = first.stats.tasks[0]!
         assert.ok(firstTaskStats.cache !== undefined)
         assert.strictEqual(firstTaskStats.cache.inputs.length, 1)
         assert.strictEqual(firstTaskStats.cache.inputs[0], "src")
@@ -368,7 +368,7 @@ describe("cache", () => {
       })
 
       assert.strictEqual(result.ok, true)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
 
       // Cache info should be present
       assert.ok(taskStats.cache !== undefined, "Cache info should be present")
@@ -420,7 +420,7 @@ describe("cache", () => {
       assert.strictEqual(result.ok, true)
       assert.strictEqual(result.stats.summary.skipped, 1)
 
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
       assert.strictEqual(taskStats.status, "skipped")
 
       // Cache info should show hit
@@ -448,7 +448,7 @@ describe("cache", () => {
       })
 
       assert.strictEqual(result.ok, true)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
 
       // Cache info should NOT be present
       assert.strictEqual(taskStats.cache, undefined)
@@ -476,7 +476,7 @@ describe("cache", () => {
       })
 
       assert.strictEqual(result.ok, true)
-      const taskStats = result.stats.tasks[0]
+      const taskStats = result.stats.tasks[0]!
 
       assert.ok(taskStats.cache !== undefined)
       assert.ok(Array.isArray(taskStats.cache.inputs))
@@ -537,7 +537,7 @@ describe("cache", () => {
         )
 
         // Verify cache info in stats uses the sanitized file name
-        const taskStats = first.stats.tasks[0]
+        const taskStats = first.stats.tasks[0]!
         assert.ok(taskStats.cache !== undefined)
         assert.strictEqual(taskStats.cache.cacheFile, expectedCacheFile)
 
