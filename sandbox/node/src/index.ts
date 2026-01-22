@@ -25,7 +25,7 @@ const b = task({
       env: {
         LOG_LEVEL: "debug",
       },
-      dependencies: [a.command("build")],
+      dependencies: [a],
     },
   },
 })

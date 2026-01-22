@@ -4,7 +4,6 @@ import { createHash } from "node:crypto"
 
 import {
   $TASK_INTERNAL,
-  $PIPELINE_INTERNAL,
   CACHE_DIR,
   CACHE_VERSION,
 } from "./constants.js"
@@ -99,11 +98,10 @@ function executeNestedPipeline(
   // Track unique tasks that are ready, complete, or skipped
   // A task can be both ready and complete, so we use Sets to avoid double-counting
   const readyOrCompleteTasks = new Set<string>()
+  // Track all task IDs that we've seen in the nested pipeline
+  // This includes tasks with transitive dependencies, not just root tasks
+  const allSeenTasks = new Set<string>()
   let didMarkOuterReady = false
-
-  // Get total tasks from nested pipeline
-  // Count tasks in nested pipeline (including transitive dependencies will be computed at run time)
-  const nestedTotalTasks = nestedPipeline[$PIPELINE_INTERNAL].tasks.length
 
   const commandName =
     config?.command ?? (process.env.NODE_ENV === "production" ? "build" : "dev")
@@ -135,8 +133,14 @@ function executeNestedPipeline(
     if (didMarkOuterReady) return
     // Count unique tasks: ready (via readyWhen), complete, or skipped
     // A task can be both ready and complete, so we use a Set to track unique tasks
-    const totalFinished = readyOrCompleteTasks.size + nestedSkippedCount
-    if (totalFinished === nestedTotalTasks && nestedTotalTasks > 0) {
+    // We need to check against all seen tasks, not just root tasks, because
+    // the nested pipeline may include transitive dependencies
+    // readyOrCompleteTasks includes all tasks that are ready, complete, or skipped
+    // (skipped tasks are added to readyOrCompleteTasks in onTaskSkipped)
+    const totalFinished = readyOrCompleteTasks.size
+    // Only mark as ready if we've seen at least one task and all seen tasks are finished
+    // This handles the case where transitive dependencies are included
+    if (allSeenTasks.size > 0 && totalFinished === allSeenTasks.size) {
       didMarkOuterReady = true
       // Mark outer task as ready - this allows dependents to proceed
       callbacks.onTaskReady(taskId)
@@ -163,6 +167,8 @@ function executeNestedPipeline(
       excludeTasks, // Exclude already-satisfied dependencies from nested graph
       onTaskBegin: (nestedTaskName, nestedTaskId) => {
         if (pipelineStopped) return
+        // Track all tasks we've seen (including transitive dependencies)
+        allSeenTasks.add(nestedTaskId)
         config?.onTaskBegin?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
       },
       onTaskReady: (_, nestedTaskId) => {
@@ -184,6 +190,10 @@ function executeNestedPipeline(
       onTaskSkipped: (nestedTaskName, nestedTaskId, mode, reason) => {
         if (pipelineStopped) return
         nestedSkippedCount++
+        // Track skipped tasks in both sets
+        // (they're finished, just in a different way)
+        allSeenTasks.add(nestedTaskId)
+        readyOrCompleteTasks.add(nestedTaskId)
         checkAllInnerTasksReady()
         config?.onTaskSkipped?.(
           `${taskName}:${nestedTaskName}`,
@@ -219,7 +229,11 @@ function executeNestedPipeline(
       // - If all inner tasks are skipped → outer task is skipped
       // - If some run, some skip → outer task is completed
       // - If any fail → outer task fails (handled above)
-      if (nestedSkippedCount === nestedTotalTasks && nestedTotalTasks > 0) {
+      // Use the nested pipeline's summary to get accurate counts
+      // This accounts for transitive dependencies that weren't in the root tasks
+      const actualSkippedCount = result.stats.summary.skipped
+      const actualTotalTasks = result.stats.summary.total
+      if (actualSkippedCount === actualTotalTasks && actualTotalTasks > 0) {
         // All tasks were skipped
         const finishedAt = Date.now()
         context.updateTaskStatus(taskId, {

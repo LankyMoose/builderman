@@ -3,14 +3,15 @@
   "version": "1.5.3",
   "description": "PNPM package dependency resolver for builderman",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/LankyMoose/builderman"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc",
-    "dev": "tsc --watch",
+    "build": "node build.js",
+    "dev": "node build.js --dev",
     "test": "node --test ./dist/__tests__/*.test.js"
   },
   "keywords": [
@@ -22,10 +23,14 @@
   "author": "LankyMoose",
   "license": "ISC",
   "dependencies": {
-    "builderman": "workspace:*",
     "yaml": "2.8.2"
   },
+  "peerDependencies": {
+    "builderman": "1.x"
+  },
   "devDependencies": {
+    "builderman": "workspace:^",
+    "esbuild": "^0.27.2",
     "@types/node": "^25.0.8"
   }
 }
