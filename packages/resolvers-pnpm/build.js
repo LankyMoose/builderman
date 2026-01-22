@@ -9,7 +9,7 @@ const isDev = args.includes("--dev")
  * @type {import("esbuild").BuildOptions}
  */
 const options = {
-  entryPoints: ["src/index.ts"],
+  entryPoints: ["src/index.ts", "src/__tests__/*.test.ts"],
   outdir: "dist",
   bundle: true,
   sourcemap: true,
