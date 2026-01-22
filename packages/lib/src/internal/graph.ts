@@ -1,6 +1,13 @@
-import { $TASK_INTERNAL } from "./constants.js"
+import { $TASK_INTERNAL, $PIPELINE_INTERNAL } from "./constants.js"
 import { PipelineError } from "../errors.js"
-import type { TaskNode, TaskGraph, Task, Artifact, CommandCacheConfig } from "../types.js"
+import type {
+  TaskNode,
+  TaskGraph,
+  Task,
+  Artifact,
+  CommandCacheConfig,
+  Pipeline,
+} from "../types.js"
 
 /**
  * Internal cache config with artifacts separated from inputs.
@@ -26,6 +33,42 @@ export function createTaskGraph(
 ): TaskGraph {
   const nodes = new Map<string, TaskNode>()
   const allTasks = new Set<Task>()
+
+  // Build a map of tasks to their containing nested pipeline tasks
+  // This helps us detect when a task is inside a nested pipeline
+  const taskToNestedPipeline = new Map<Task, Task>()
+  const collectNestedPipelineTasks = (task: Task): void => {
+    const internal = task[$TASK_INTERNAL]
+    const nestedPipeline: Pipeline | undefined = internal.pipeline
+    if (nestedPipeline) {
+      // This task is a nested pipeline - map its inner tasks to it
+      const innerTasks = nestedPipeline[$PIPELINE_INTERNAL].tasks
+      for (const innerTask of innerTasks) {
+        taskToNestedPipeline.set(innerTask, task)
+        // Recursively check if inner tasks are also nested pipelines
+        collectNestedPipelineTasks(innerTask)
+      }
+    }
+  }
+
+  // First pass: collect all nested pipeline relationships from root tasks
+  // We need to check all root tasks and their nested pipelines recursively
+  const checkTaskForNestedPipelines = (task: Task): void => {
+    collectNestedPipelineTasks(task)
+    // Also check if this task's dependencies have nested pipelines
+    const internal = task[$TASK_INTERNAL]
+    const anyInternal = internal as any
+    const pipelineDeps: Task[] | undefined = anyInternal.__pipelineDeps
+    if (pipelineDeps) {
+      for (const dep of pipelineDeps) {
+        checkTaskForNestedPipelines(dep)
+      }
+    }
+  }
+
+  for (const rootTask of rootTasks) {
+    checkTaskForNestedPipelines(rootTask)
+  }
 
   // Helper to get dependencies for a task
   const getTaskDependencies = (task: Task): Task[] => {
@@ -64,7 +107,15 @@ export function createTaskGraph(
       if (cacheConfig && cacheConfig.artifacts) {
         for (const artifact of cacheConfig.artifacts) {
           if (artifact.task !== task) {
-            deps.add(artifact.task)
+            // If the artifact's task is inside a nested pipeline, depend on the nested pipeline instead
+            const nestedPipelineTask = taskToNestedPipeline.get(artifact.task)
+            if (nestedPipelineTask) {
+              // The artifact task is inside a nested pipeline - depend on the nested pipeline task
+              deps.add(nestedPipelineTask)
+            } else {
+              // Not in a nested pipeline - depend on the task directly
+              deps.add(artifact.task)
+            }
           }
         }
       }
@@ -82,6 +133,15 @@ export function createTaskGraph(
     // Skip tasks that should be excluded (e.g., already-satisfied dependencies)
     if (excludeTasks && excludeTasks.has(task)) {
       return
+    }
+
+    // If this task is inside a nested pipeline, don't add it to the root graph
+    // The nested pipeline will handle it internally
+    const nestedPipelineTask = taskToNestedPipeline.get(task)
+    if (nestedPipelineTask) {
+      // This task is inside a nested pipeline - ensure the nested pipeline is in the graph instead
+      collectTasks(nestedPipelineTask)
+      return // Don't add the inner task to the root graph
     }
 
     allTasks.add(task)
