@@ -1,5 +1,6 @@
 import * as path from "node:path"
 import * as fs from "node:fs"
+import { createHash } from "node:crypto"
 
 import {
   $TASK_INTERNAL,
@@ -10,8 +11,15 @@ import {
 import { PipelineError } from "../errors.js"
 import { parseCommandLine, resolveExecutable } from "./util.js"
 
-import type { Task, Pipeline, CommandCacheConfig } from "../types.js"
+import type { Task, Pipeline, CommandCacheConfig, Artifact } from "../types.js"
 import type { ExecutionContext } from "./execution-context.js"
+
+/**
+ * Internal cache config with artifacts separated from inputs.
+ */
+type InternalCacheConfig = CommandCacheConfig & {
+  artifacts?: Artifact[]
+}
 
 /**
  * Callbacks for task execution events that replace scheduler coordination.
@@ -92,7 +100,8 @@ function executeNestedPipeline(
   let didMarkOuterReady = false
 
   // Get total tasks from nested pipeline
-  const nestedTotalTasks = nestedPipeline[$PIPELINE_INTERNAL].graph.nodes.size
+  // Count tasks in nested pipeline (including transitive dependencies will be computed at run time)
+  const nestedTotalTasks = nestedPipeline[$PIPELINE_INTERNAL].tasks.length
 
   const commandName =
     config?.command ?? (process.env.NODE_ENV === "production" ? "build" : "dev")
@@ -132,9 +141,16 @@ function executeNestedPipeline(
     }
   }
 
+  // Get task-level dependencies of the pipeline task to exclude from nested graph
+  // These dependencies are already satisfied by the outer pipeline
+  const anyInternal = task[$TASK_INTERNAL] as any
+  const pipelineDeps: Task[] | undefined = anyInternal.__pipelineDeps
+  const excludeTasks = pipelineDeps ? new Set(pipelineDeps) : undefined
+
   // Run the nested pipeline with signal propagation
   // Pass the command from parent pipeline to nested pipeline
   // If undefined, nested pipeline will use its own default (build/dev based on NODE_ENV)
+  // Also pass excludeTasks to prevent including already-satisfied dependencies
   nestedPipeline
     .run({
       spawn: context.spawn,
@@ -142,6 +158,7 @@ function executeNestedPipeline(
       strict: config?.strict,
       signal: context.signal, // Pass signal to nested pipeline
       env: mergedEnv, // Pass merged env to nested pipeline
+      excludeTasks, // Exclude already-satisfied dependencies from nested graph
       onTaskBegin: (nestedTaskName, nestedTaskId) => {
         if (pipelineStopped) return
         config?.onTaskBegin?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
@@ -300,7 +317,7 @@ function executeRegularTask(
   let completedTimeout = Infinity
   let teardown: string | undefined
   let commandEnv: Record<string, string> = {}
-  let cacheConfig: CommandCacheConfig | undefined
+  let cacheConfig: InternalCacheConfig | undefined
 
   if (typeof commandConfig === "string") {
     commandString = commandConfig
@@ -399,7 +416,8 @@ function executeRegularTask(
     )
 
     // Initialize cache info in task stats
-    const inputPaths = cacheConfig.inputs
+    // After processing in task.ts, inputs only contains strings (artifacts are separated)
+    const inputPaths = (cacheConfig.inputs ?? []) as string[]
     const outputPaths = cacheConfig.outputs ?? []
 
     context.updateTaskStatus(taskId, {
@@ -415,45 +433,115 @@ function executeRegularTask(
       // Ensure cache directory exists
       fs.mkdirSync(path.dirname(taskCacheFile), { recursive: true })
 
-      const previousSnapshot = readSnapshot(taskCacheFile)
-      const currentSnapshot = createSnapshot(taskCwd, cacheConfig)
+      // Get artifact identifiers from cache inputs for this command
+      const consumedArtifactIdentifiers = getConsumedArtifactIdentifiers(
+        task,
+        commandName,
+        context
+      )
 
-      if (
-        previousSnapshot &&
-        snapshotsEqual(previousSnapshot, currentSnapshot)
-      ) {
-        const finishedAt = Date.now()
+      // If we can't get artifact identifiers (e.g., dependencies haven't run yet),
+      // we can't use the cache - must run the task
+      if (consumedArtifactIdentifiers === null) {
+        // Cache miss - can't determine if cache is valid without artifact identifiers
         context.updateTaskStatus(taskId, {
-          status: "skipped",
-          command: commandName,
-          finishedAt,
-          durationMs: 0,
           cache: {
             checked: true,
-            hit: true,
+            hit: false,
             cacheFile: taskCacheFile,
             inputs: inputPaths,
             outputs: outputPaths,
           },
         })
-        config?.onTaskSkipped?.(taskName, taskId, commandName, "cache-hit")
-        setImmediate(() => {
-          callbacks.onTaskSkipped(taskId)
-        })
-        return
-      }
+        // Don't return - continue to execute the task
+      } else {
+        const previousSnapshot = readSnapshot(taskCacheFile)
+        const hasArtifactInputs = consumedArtifactIdentifiers.size > 0
+        const currentSnapshot = createSnapshot(
+          taskCwd,
+          cacheConfig,
+          hasArtifactInputs ? consumedArtifactIdentifiers : undefined
+        )
 
-      // Cache miss - update stats to indicate cache was checked but didn't hit
-      context.updateTaskStatus(taskId, {
-        cache: {
-          checked: true,
-          hit: false,
-          cacheFile: taskCacheFile,
-          inputs: inputPaths,
-          outputs: outputPaths,
-        },
-      })
-      // Don't write snapshot here - wait until task completes successfully
+        // If we have artifact inputs, we must compare them
+        // If the previous snapshot doesn't have artifact inputs, it's a cache miss
+        if (hasArtifactInputs) {
+          if (!previousSnapshot || !previousSnapshot.artifactInputs) {
+            // Cache miss - artifact inputs exist but previous snapshot doesn't have them
+            context.updateTaskStatus(taskId, {
+              cache: {
+                checked: true,
+                hit: false,
+                cacheFile: taskCacheFile,
+                inputs: inputPaths,
+                outputs: outputPaths,
+              },
+            })
+            // Don't return - continue to execute the task
+          } else if (
+            previousSnapshot &&
+            snapshotsEqual(previousSnapshot, currentSnapshot)
+          ) {
+            // Snapshots match including artifact inputs - cache hit
+            const finishedAt = Date.now()
+            context.updateTaskStatus(taskId, {
+              status: "skipped",
+              command: commandName,
+              finishedAt,
+              durationMs: 0,
+              cache: {
+                checked: true,
+                hit: true,
+                cacheFile: taskCacheFile,
+                inputs: inputPaths,
+                outputs: outputPaths,
+              },
+            })
+            config?.onTaskSkipped?.(taskName, taskId, commandName, "cache-hit")
+            setImmediate(() => {
+              callbacks.onTaskSkipped(taskId)
+            })
+            return
+          }
+          // Artifact inputs exist but don't match - cache miss, continue execution
+        } else if (
+          previousSnapshot &&
+          snapshotsEqual(previousSnapshot, currentSnapshot)
+        ) {
+          // No artifact dependencies and snapshots match - cache hit
+          const finishedAt = Date.now()
+          context.updateTaskStatus(taskId, {
+            status: "skipped",
+            command: commandName,
+            finishedAt,
+            durationMs: 0,
+            cache: {
+              checked: true,
+              hit: true,
+              cacheFile: taskCacheFile,
+              inputs: inputPaths,
+              outputs: outputPaths,
+            },
+          })
+          config?.onTaskSkipped?.(taskName, taskId, commandName, "cache-hit")
+          setImmediate(() => {
+            callbacks.onTaskSkipped(taskId)
+          })
+          return
+        }
+
+        // Cache miss - update stats to indicate cache was checked but didn't hit
+        context.updateTaskStatus(taskId, {
+          cache: {
+            checked: true,
+            hit: false,
+            cacheFile: taskCacheFile,
+            inputs: inputPaths,
+            outputs: outputPaths,
+          },
+        })
+        // Don't write snapshot here - wait until task completes successfully
+      }
     } catch {
       // Cache failures must never break task execution. Fall through to normal run.
       taskCacheFile = undefined
@@ -637,7 +725,17 @@ function executeRegularTask(
     // If caching is enabled, write the snapshot after successful completion
     if (cacheConfig && taskCacheFile) {
       try {
-        const completedSnapshot = createSnapshot(taskCwd, cacheConfig)
+        // Get artifact identifiers again (in case they changed during execution)
+        const consumedArtifactIdentifiers = getConsumedArtifactIdentifiers(
+          task,
+          commandName,
+          context
+        )
+        const completedSnapshot = createSnapshot(
+          taskCwd,
+          cacheConfig,
+          consumedArtifactIdentifiers || undefined
+        )
         writeSnapshot(taskCacheFile, completedSnapshot)
       } catch {
         // Cache failures must never break task execution
@@ -666,8 +764,21 @@ interface FileMetadata {
 interface Snapshot {
   version: number
   cwd: string
+  /**
+   * Unique identifier for this snapshot.
+   * Generated when the task completes and changes when outputs change.
+   * Used to track artifact state across runs.
+   */
+  identifier: string
   inputs: FileMetadata[]
   outputs: FileMetadata[]
+  /**
+   * Artifact references from cache inputs.
+   * Object mapping "taskName:commandName" to the identifier of the consumed artifact.
+   * Only present if the task has artifact inputs.
+   * Stored as object (not Map) for JSON serialization.
+   */
+  artifactInputs?: Record<string, string>
 }
 
 function sanitizeFileName(name: string): string {
@@ -705,14 +816,36 @@ function collectFileMetadata(root: string, relPath: string): FileMetadata[] {
   ]
 }
 
+/**
+ * Generates a unique identifier for a snapshot based on its outputs.
+ * This identifier changes when outputs change, providing a "solid state" for artifacts.
+ */
+function generateSnapshotIdentifier(outputs: FileMetadata[]): string {
+  if (outputs.length === 0) {
+    return ""
+  }
+
+  const hash = createHash("sha256")
+  hash.update(`${CACHE_VERSION}:`)
+
+  // Hash all output file metadata
+  for (const output of outputs) {
+    hash.update(`${output.path}:${output.mtimeMs}:${output.size}:`)
+  }
+
+  return hash.digest("hex")
+}
+
 function createSnapshot(
   taskCwd: string,
-  cacheConfig: import("../types.js").CommandCacheConfig
+  cacheConfig: InternalCacheConfig,
+  artifactInputs?: Map<string, string>
 ): Snapshot {
   const inputs: FileMetadata[] = []
   const outputs: FileMetadata[] = []
 
-  const inputPaths = cacheConfig.inputs
+  // After processing in task.ts, inputs only contains strings (artifacts are separated)
+  const inputPaths = (cacheConfig.inputs ?? []) as string[]
   const outputPaths = cacheConfig.outputs ?? []
 
   for (const p of inputPaths) {
@@ -728,12 +861,29 @@ function createSnapshot(
   inputs.sort(sortByPath)
   outputs.sort(sortByPath)
 
-  return {
+  // Generate unique identifier based on outputs
+  const identifier = generateSnapshotIdentifier(outputs)
+
+  const snapshot: Snapshot = {
     version: CACHE_VERSION,
     cwd: taskCwd,
+    identifier,
     inputs,
     outputs,
   }
+
+  if (artifactInputs) {
+    // Convert Map to object for JSON serialization if needed
+    if (artifactInputs instanceof Map) {
+      if (artifactInputs.size > 0) {
+        snapshot.artifactInputs = Object.fromEntries(artifactInputs)
+      }
+    } else {
+      snapshot.artifactInputs = artifactInputs
+    }
+  }
+
+  return snapshot
 }
 
 function readSnapshot(cacheFile: string): Snapshot | null {
@@ -745,6 +895,10 @@ function readSnapshot(cacheFile: string): Snapshot | null {
     const parsed = JSON.parse(data) as Snapshot
     if (parsed.version !== CACHE_VERSION) {
       return null
+    }
+    // Backward compatibility: if snapshot doesn't have identifier, generate one from outputs
+    if (!parsed.identifier) {
+      parsed.identifier = generateSnapshotIdentifier(parsed.outputs)
     }
     return parsed
   } catch {
@@ -789,5 +943,142 @@ function snapshotsEqual(a: Snapshot, b: Snapshot): boolean {
     }
   }
 
+  // Compare identifiers - they must match
+  if (a.identifier !== b.identifier) {
+    return false
+  }
+
+  // Compare artifact inputs
+  const aArtifactInputs = a.artifactInputs
+  const bArtifactInputs = b.artifactInputs
+
+  // If one has artifact inputs and the other doesn't, they're different
+  if (
+    (aArtifactInputs && !bArtifactInputs) ||
+    (!aArtifactInputs && bArtifactInputs)
+  ) {
+    return false
+  }
+
+  // If both have artifact inputs, compare them
+  if (aArtifactInputs && bArtifactInputs) {
+    const aKeys = Object.keys(aArtifactInputs).sort()
+    const bKeys = Object.keys(bArtifactInputs).sort()
+
+    if (aKeys.length !== bKeys.length) return false
+
+    for (const key of aKeys) {
+      if (aArtifactInputs[key] !== bArtifactInputs[key]) {
+        return false
+      }
+    }
+  }
+
   return true
+}
+
+/**
+ * Gets the artifact identifier for a consumed task command.
+ * Reads the identifier from the consumed task's cache file (written after completion).
+ * Returns null if the task doesn't have cache config, the command doesn't exist, or the cache file doesn't exist.
+ */
+function getArtifactIdentifier(
+  consumedTask: Task,
+  commandName: string,
+  _context: ExecutionContext
+): string | null {
+  const { name: consumedTaskName, commands } = consumedTask[$TASK_INTERNAL]
+  const commandConfig = commands[commandName]
+
+  if (!commandConfig) {
+    return null
+  }
+
+  // Only tasks with cache config can produce artifacts
+  const cacheConfig =
+    typeof commandConfig === "string" ? undefined : commandConfig.cache
+  if (
+    !cacheConfig ||
+    !cacheConfig.outputs ||
+    cacheConfig.outputs.length === 0
+  ) {
+    return null
+  }
+
+  // Read the artifact identifier from the consumed task's cache file
+  // This is the authoritative identifier computed when the task completed
+  const cacheRoot = path.resolve(process.cwd(), CACHE_DIR)
+  const cacheDir = path.join(cacheRoot, "cache", `v${CACHE_VERSION}`)
+  const consumedCacheFile = path.join(
+    cacheDir,
+    `${sanitizeFileName(consumedTaskName)}-${sanitizeFileName(
+      commandName
+    )}.json`
+  )
+
+  const snapshot = readSnapshot(consumedCacheFile)
+  if (!snapshot) {
+    // Cache file doesn't exist yet
+    return null
+  }
+
+  // readSnapshot always generates an identifier if missing (for backward compatibility)
+  // So snapshot.identifier should always exist after readSnapshot
+  // Empty string is valid (means no outputs), so we allow it
+  // Only return null if identifier is actually missing (undefined/null)
+  if (snapshot.identifier === undefined || snapshot.identifier === null) {
+    // This shouldn't happen, but handle it gracefully
+    return null
+  }
+
+  return snapshot.identifier
+}
+
+/**
+ * Gets artifact identifiers for all consumed artifacts (extracted from cache.inputs).
+ * Returns a map from "taskName:commandName" to identifier, or null if any artifact
+ * doesn't have an identifier yet.
+ */
+function getConsumedArtifactIdentifiers(
+  task: Task,
+  commandName: string,
+  context: ExecutionContext
+): Map<string, string> | null {
+  const { commands } = task[$TASK_INTERNAL]
+  const commandConfig = commands[commandName]
+  if (!commandConfig || typeof commandConfig === "string") {
+    return new Map()
+  }
+
+  const cacheConfig = commandConfig.cache as InternalCacheConfig | undefined
+  if (
+    !cacheConfig ||
+    !cacheConfig.artifacts ||
+    cacheConfig.artifacts.length === 0
+  ) {
+    return new Map()
+  }
+
+  const identifiers = new Map<string, string>()
+
+  for (const artifact of cacheConfig.artifacts) {
+    const consumedTaskName = artifact.task[$TASK_INTERNAL].name
+    const consumedCommandName = artifact.command
+    const key = `${consumedTaskName}:${consumedCommandName}`
+
+    const identifier = getArtifactIdentifier(
+      artifact.task,
+      consumedCommandName,
+      context
+    )
+
+    if (identifier === null) {
+      // If any consumed artifact doesn't have an identifier yet, we can't use cache
+      return null
+    }
+
+    identifiers.set(key, identifier)
+  }
+
+  return identifiers
 }

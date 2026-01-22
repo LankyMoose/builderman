@@ -1,6 +1,7 @@
 import type {
   $TASK_INTERNAL,
   $PIPELINE_INTERNAL,
+  $ARTIFACT_INTERNAL,
 } from "./internal/constants.js"
 import type { PipelineError } from "./errors.js"
 
@@ -12,6 +13,12 @@ export interface CommandConfig {
    * The command string to execute (e.g., "npm run dev" or "node server.js").
    */
   run: string
+  /**
+   * Optional array of task dependencies for this command.
+   * The task's command with the same name must complete before this command can start.
+   * For example, if this is the "build" command and you pass a task, it will depend on that task's "build" command.
+   */
+  dependencies?: Task[]
   /**
    * Optional function that determines when the command is considered "ready".
    * The function receives the accumulated stdout output and should return true
@@ -57,17 +64,32 @@ export interface CommandConfig {
   cache?: CommandCacheConfig
 }
 
+export interface CommandConfigInternal extends CommandConfig {
+  cache?: CommandCacheConfigInternal
+  commandRefDependencies?: Array<{
+    taskId: string
+    command: string
+  }>
+}
+
+export interface CommandsInternal extends Commands {
+  [key: string]: CommandConfigInternal
+}
+
 /**
  * Configuration for task-level caching.
  */
 export interface CommandCacheConfig {
   /**
-   * Paths that represent the task's inputs.
-   * These are typically source directories (e.g. "src") or files.
+   * Paths and/or artifacts that represent the task's inputs.
+   * These are typically source directories (e.g. "src") or files, or artifacts from other tasks.
    *
    * Paths may be absolute or relative to the task's `cwd`.
+   * Artifacts can be mixed with paths for convenience - they will be separated internally.
+   * Artifacts are created via `task.artifact("command")` and are tracked by unique identifiers
+   * that change when the producing task's outputs change.
    */
-  inputs: string[]
+  inputs?: (string | Artifact)[]
 
   /**
    * Paths that represent the task's outputs.
@@ -79,6 +101,9 @@ export interface CommandCacheConfig {
   outputs?: string[]
 }
 
+export interface CommandCacheConfigInternal extends CommandCacheConfig {
+  artifacts?: Artifact[]
+}
 /**
  * A command can be either a simple string or a CommandConfig object.
  * When a string is provided, it's equivalent to `{ run: string }`.
@@ -96,9 +121,32 @@ export interface Commands {
 }
 
 /**
+ * Represents a reference to a specific command's outputs (artifact).
+ * Created via `task.artifact("build")` to specify artifact-level dependencies.
+ * When a task depends on an artifact, its cache key includes the fingerprint
+ * of those artifacts. If the artifacts haven't changed, the consuming task
+ * can be skipped even if the producing task ran.
+ */
+export interface Artifact {
+  /**
+   * The task that produces the artifacts.
+   */
+  readonly task: Task
+  /**
+   * The command name whose outputs should be consumed (e.g., "build").
+   */
+  readonly command: string
+  /**
+   * Internal marker to distinguish Artifact from Task.
+   * @internal
+   */
+  readonly [$ARTIFACT_INTERNAL]: true
+}
+
+/**
  * Configuration for creating a task in the pipeline.
  */
-export interface TaskConfig {
+export interface TaskConfig<T extends Commands = Commands> {
   /**
    * The name of the task. Used for logging and identification.
    */
@@ -108,7 +156,7 @@ export interface TaskConfig {
    * The pipeline will select a command based on the run configuration
    * (defaults to "dev" in development, "build" in production).
    */
-  commands: Commands
+  commands: T
   /**
    * Working directory for the task's commands.
    * Can be absolute or relative to the current working directory.
@@ -116,8 +164,13 @@ export interface TaskConfig {
    */
   cwd?: string
   /**
-   * Optional array of tasks that must complete before this task can start.
-   * Dependencies are executed in parallel when possible.
+   * Optional array of tasks that this task depends on.
+   * When a task dependency is declared, each command in this task automatically
+   * depends on the command with the same name in the dependency task (if it exists).
+   * For example, if this task has commands `{ dev, build }` and depends on a task
+   * with commands `{ dev, build }`, then this task's `dev` command will depend on
+   * the dependency's `dev` command, and this task's `build` command will depend on
+   * the dependency's `build` command.
    */
   dependencies?: Task[]
   /**
@@ -135,20 +188,39 @@ export interface TaskConfig {
 interface TaskInternal extends TaskConfig {
   id: string
   cwd: string
-  dependencies: Task[]
   env: Record<string, string>
   pipeline?: Pipeline // If set, this task represents a nested pipeline
+  commands: CommandsInternal
 }
+
+type InferCommandNamesWithCacheOutput<T extends Commands> = {
+  [K in keyof T]: T[K] extends CommandConfig
+    ? T[K]["cache"] extends CommandCacheConfig
+      ? T[K]["cache"]["outputs"] extends string[]
+        ? K
+        : never
+      : never
+    : never
+}[keyof T]
 
 /**
  * A task to be executed in a pipeline. Tasks are created using the `task()` function.
  * Tasks can have dependencies on other tasks and define commands to execute in a specific mode.
  */
-export interface Task {
+export interface Task<T extends Commands = any> {
   /**
    * The name of the task.
    */
   name: string
+  /**
+   * Creates an artifact reference for a specific command of this task.
+   * Used to specify artifact-level dependencies: `dependencies: [lib.artifact("build")]`
+   *
+   * @param command - The command name whose outputs should be consumed (e.g., "build").
+   * @returns An Artifact object that can be used in command dependencies.
+   * @throws Error if the command doesn't exist, doesn't have cache configuration, or doesn't have outputs.
+   */
+  artifact(command: InferCommandNamesWithCacheOutput<T>): Artifact
   /**
    * Internal task data. This property is for internal use only.
    * @internal
@@ -191,6 +263,12 @@ export interface PipelineRunConfig {
    * @default Infinity (no limit)
    */
   maxConcurrency?: number
+  /**
+   * Optional set of tasks to exclude from the graph.
+   * Used by nested pipelines to exclude already-satisfied dependencies.
+   * @internal
+   */
+  excludeTasks?: Set<Task>
   /**
    * Callback invoked when a task begins execution.
    * @param taskName The name of the task that started.
@@ -253,9 +331,9 @@ export interface PipelineTaskConfig {
   name: string
   /**
    * Optional array of tasks that must complete before this pipeline task can start.
+   * These are task-level dependencies for the synthetic pipeline task.
    */
   dependencies?: Task[]
-
   /**
    * Optional environment variables to set for the process spawned by this pipeline task.
    * Overrides environment variables inherited from the parent process.
@@ -265,7 +343,6 @@ export interface PipelineTaskConfig {
 
 interface PipelineInternal {
   tasks: Task[]
-  graph: TaskGraph
 }
 
 /**

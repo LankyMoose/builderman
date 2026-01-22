@@ -36,23 +36,26 @@ export function pipeline(tasks: Task[]): Pipeline {
   const tasksClone = [...tasks]
   validateTasks(tasksClone)
 
-  const graph = createTaskGraph(tasksClone)
-  graph.validate()
-  graph.simplify()
-
   const pipelineImpl: Pipeline = {
     [$PIPELINE_INTERNAL]: {
       tasks: tasksClone,
-      graph,
     },
 
     toTask({ name, dependencies, env }): Task {
+      // For nested pipelines, we still support task-level dependencies
+      // since the synthetic task has no commands. These will be used
+      // when the nested pipeline task is used as a dependency.
       const syntheticTask = task({
         name,
         commands: {},
-        dependencies,
         env,
       })
+
+      // Store dependencies internally for graph building
+      if (dependencies && dependencies.length > 0) {
+        validateTasks(dependencies)
+        ;(syntheticTask[$TASK_INTERNAL] as any).__pipelineDeps = dependencies
+      }
 
       // Mark this task as a pipeline task so it can be detected by the executor
       syntheticTask[$TASK_INTERNAL].pipeline = pipelineImpl
@@ -69,6 +72,14 @@ export function pipeline(tasks: Task[]): Pipeline {
         config?.command ??
         (process.env.NODE_ENV === "production" ? "build" : "dev")
       const startedAt = Date.now()
+
+      // Build a graph for this run based on command-level dependencies
+      // The graph will include all transitive dependencies, not just tasks in the pipeline
+      // Exclude tasks that are already satisfied (e.g., by outer pipeline)
+      const graph = createTaskGraph(tasksClone, command, config?.excludeTasks)
+
+      graph.validate()
+      graph.simplify()
 
       // Initialize task stats tracking
       const taskStats = new Map<string, TaskStats>()

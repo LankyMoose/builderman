@@ -79,10 +79,15 @@ describe("pipeline (real processes)", () => {
     const afterReadyTask = task({
       name: "after-ready",
       commands: {
-        dev: nodeCommand("success.js"),
-        build: nodeCommand("success.js"),
+        dev: {
+          run: nodeCommand("success.js"),
+          dependencies: [readyTask],
+        },
+        build: {
+          run: nodeCommand("success.js"),
+          dependencies: [readyTask],
+        },
       },
-      dependencies: [readyTask],
     })
 
     const result = await pipeline([readyTask, afterReadyTask]).run({

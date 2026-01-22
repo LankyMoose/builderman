@@ -19,8 +19,16 @@ describe("pipeline <-> task conversion", () => {
     })
     const buildTask2 = task({
       name: "build:bundle",
-      commands: { dev: "echo build:bundle", build: "echo build:bundle" },
-      dependencies: [buildTask1],
+      commands: {
+        dev: {
+          run: "echo build:bundle",
+          dependencies: [buildTask1],
+        },
+        build: {
+          run: "echo build:bundle",
+          dependencies: [buildTask1],
+        },
+      },
     })
     const build = pipeline([buildTask1, buildTask2])
 
@@ -119,8 +127,13 @@ describe("pipeline <-> task conversion", () => {
 
     const dependent = task({
       name: "dependent",
-      commands: { dev: "run dependent", build: "run dependent" },
-      dependencies: [nested],
+      commands: {
+        dev: { run: "run dependent", dependencies: [nested] },
+        build: {
+          run: "run dependent",
+          dependencies: [nested],
+        },
+      },
     })
 
     const controller = new AbortController()
@@ -180,8 +193,16 @@ describe("pipeline <-> task conversion", () => {
 
     const inner2 = task({
       name: "inner-2",
-      commands: { dev: "echo inner-2", build: "echo inner-2" },
-      dependencies: [inner1],
+      commands: {
+        dev: {
+          run: "echo inner-2",
+          dependencies: [inner1],
+        },
+        build: {
+          run: "echo inner-2",
+          dependencies: [inner1],
+        },
+      },
     })
 
     const nested = pipeline([inner1, inner2]).toTask({ name: "nested" })

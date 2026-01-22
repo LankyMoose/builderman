@@ -1,11 +1,105 @@
 import { $TASK_INTERNAL } from "./constants.js"
-import type { TaskNode, TaskGraph, Task } from "../types.js"
+import { PipelineError } from "../errors.js"
+import type { TaskNode, TaskGraph, Task, Artifact, CommandCacheConfig } from "../types.js"
 
-export function createTaskGraph(tasks: Task[]): TaskGraph {
+/**
+ * Internal cache config with artifacts separated from inputs.
+ */
+type InternalCacheConfig = CommandCacheConfig & {
+  artifacts?: Artifact[]
+}
+
+/**
+ * Creates a task graph from root tasks, including all transitive dependencies.
+ *
+ * The graph will include all tasks reachable from the root tasks through
+ * their dependencies, creating a single global task graph.
+ *
+ * @param rootTasks - The root tasks to start building the graph from
+ * @param command - The command name to use for dependency resolution (e.g., "dev", "build")
+ * @param excludeTasks - Optional set of tasks to exclude from the graph (e.g., already-satisfied dependencies)
+ */
+export function createTaskGraph(
+  rootTasks: Task[],
+  command: string,
+  excludeTasks?: Set<Task>
+): TaskGraph {
   const nodes = new Map<string, TaskNode>()
+  const allTasks = new Set<Task>()
 
-  // Create nodes for all tasks
-  for (const task of tasks) {
+  // Helper to get dependencies for a task
+  const getTaskDependencies = (task: Task): Task[] => {
+    const internal = task[$TASK_INTERNAL]
+    const deps = new Set<Task>()
+
+    // Check for pipeline-level dependencies (for nested pipeline tasks)
+    const anyInternal = internal as any
+    const pipelineDeps: Task[] | undefined = anyInternal.__pipelineDeps
+    if (pipelineDeps) {
+      for (const dep of pipelineDeps) {
+        if (dep !== task) {
+          deps.add(dep)
+        }
+      }
+    }
+
+    // Check for command-level dependencies (only Tasks now)
+    const commands = internal.commands as import("../types.js").Commands
+    const cmdConfig = commands[command]
+    if (cmdConfig && typeof cmdConfig !== "string") {
+      // Get dependencies directly from the command config
+      // These are stored as Task objects
+      const commandDeps = cmdConfig.dependencies || []
+      for (const dep of commandDeps) {
+        // It's a Task - add it directly
+        const taskDep = dep as Task
+        if (taskDep !== task) {
+          deps.add(taskDep)
+        }
+      }
+
+      // Check for artifacts in cache config - these also create execution dependencies
+      // Artifacts are inputs, but we still need to ensure the producing task completes first
+      const cacheConfig = cmdConfig.cache as InternalCacheConfig | undefined
+      if (cacheConfig && cacheConfig.artifacts) {
+        for (const artifact of cacheConfig.artifacts) {
+          if (artifact.task !== task) {
+            deps.add(artifact.task)
+          }
+        }
+      }
+    }
+
+    return Array.from(deps)
+  }
+
+  // Recursively collect all tasks reachable from root tasks
+  const collectTasks = (task: Task): void => {
+    if (allTasks.has(task)) {
+      return // Already collected
+    }
+
+    // Skip tasks that should be excluded (e.g., already-satisfied dependencies)
+    if (excludeTasks && excludeTasks.has(task)) {
+      return
+    }
+
+    allTasks.add(task)
+
+    // Get dependencies and recursively collect them
+    const deps = getTaskDependencies(task)
+    for (const dep of deps) {
+      collectTasks(dep)
+    }
+  }
+
+  // Start from root tasks and collect all transitive dependencies
+  for (const rootTask of rootTasks) {
+    collectTasks(rootTask)
+  }
+
+  // Create nodes for all collected tasks
+  for (const task of allTasks) {
     const { id: taskId } = task[$TASK_INTERNAL]
     nodes.set(taskId, {
       task,
@@ -15,16 +109,18 @@ export function createTaskGraph(tasks: Task[]): TaskGraph {
   }
 
   // Build dependency relationships
-  for (const task of tasks) {
-    const { id: taskId, name: taskName, dependencies } = task[$TASK_INTERNAL]
+  for (const task of allTasks) {
+    const { id: taskId } = task[$TASK_INTERNAL]
     const node = nodes.get(taskId)!
 
-    for (const dep of dependencies) {
-      const { id: depId, name: depName } = dep[$TASK_INTERNAL]
+    const deps = getTaskDependencies(task)
+
+    for (const dep of deps) {
+      const { id: depId } = dep[$TASK_INTERNAL]
+      // All dependencies should already be in the graph (collected recursively)
       if (!nodes.has(depId)) {
-        throw new Error(
-          `Task "${taskName}" depends on "${depName}" which is not in the pipeline`
-        )
+        // This shouldn't happen, but handle gracefully
+        continue
       }
       node.dependencies.add(depId)
       nodes.get(depId)!.dependents.add(taskId)
@@ -43,7 +139,10 @@ export function createTaskGraph(tasks: Task[]): TaskGraph {
           // Found a cycle - build the cycle path
           const cycleStart = path.indexOf(nodeId)
           const cycle = [...path.slice(cycleStart), nodeId]
-          throw new Error(`Circular dependency detected: ${cycle.join(" -> ")}`)
+          throw new PipelineError(
+            `Circular dependency detected: ${cycle.join(" -> ")}`,
+            PipelineError.InvalidGraph
+          )
         }
 
         if (visited.has(nodeId)) {

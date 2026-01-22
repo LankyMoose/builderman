@@ -215,8 +215,10 @@ describe("stats field validation", () => {
       })
       const task2 = task({
         name: "task2",
-        commands: { dev: "sleep 1", build: "sleep 1" },
-        dependencies: [task1],
+      commands: {
+        dev: { run: "sleep 1", dependencies: [task1] },
+        build: { run: "sleep 1", dependencies: [task1] },
+      },
       })
 
       const mockSpawn = mock.fn((_cmd: string, _args: string[] = []) => {
@@ -366,15 +368,19 @@ describe("stats field validation", () => {
       const task2 = task({
         name: "task2",
         commands: {
-          dev: "echo task2",
+          dev: {
+            run: "echo task2",
+            dependencies: [task1],
+          },
           // No build command - will be skipped
         },
-        dependencies: [task1],
       })
       const task3 = task({
         name: "task3",
-        commands: { dev: "echo task3", build: "echo task3" },
-        dependencies: [task2],
+        commands: {
+          dev: { run: "echo task3", dependencies: [task2] },
+          build: { run: "echo task3", dependencies: [task1] },
+        },
       })
 
       const mockSpawn = createMockSpawn({
@@ -423,13 +429,17 @@ describe("stats field validation", () => {
       })
       const task2 = task({
         name: "task2",
-        commands: { dev: "echo task2", build: "echo task2" },
-        dependencies: [task1],
+        commands: {
+          dev: { run: "echo task2", dependencies: [task1] },
+          build: { run: "echo task2", dependencies: [task1] },
+        },
       })
       const task3 = task({
         name: "task3",
-        commands: { dev: "echo task3", build: "echo task3" },
-        dependencies: [task1],
+        commands: {
+          dev: { run: "echo task3", dependencies: [task1] },
+          build: { run: "echo task3", dependencies: [task1] },
+        },
       })
 
       const mockSpawn = createMockSpawn()
@@ -514,8 +524,10 @@ describe("stats field validation", () => {
       })
       const task2 = task({
         name: "task2",
-        commands: { dev: "echo task2", build: "echo task2" },
-        dependencies: [task1],
+        commands: {
+          dev: { run: "echo task2", dependencies: [task1] },
+          build: { run: "echo task2", dependencies: [task1] },
+        },
       })
 
       // task1 fails immediately, so task2 never starts

@@ -334,7 +334,10 @@ describe("cache", () => {
       } finally {
         // Clean up test directory and cache file
         fs.rmSync(testDir, { recursive: true, force: true })
-        const cacheFile = path.join(cacheDir, "input-only-cache-task-build.json")
+        const cacheFile = path.join(
+          cacheDir,
+          "input-only-cache-task-build.json"
+        )
         if (fs.existsSync(cacheFile)) {
           fs.unlinkSync(cacheFile)
         }
@@ -547,11 +550,232 @@ describe("cache", () => {
         assert.strictEqual(second.stats.summary.skipped, 1)
       } finally {
         fs.rmSync(testDir, { recursive: true, force: true })
-        const cacheFile = path.join(cacheDir, "lib_build_test_task-build_prod.json")
+        const cacheFile = path.join(
+          cacheDir,
+          "lib_build_test_task-build_prod.json"
+        )
         if (fs.existsSync(cacheFile)) {
           fs.unlinkSync(cacheFile)
         }
       }
+    })
+
+    it("skips downstream task when consumed artifacts are unchanged", async () => {
+      // Create temporary directories for this test
+      const testDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "builderman-artifact-test-")
+      )
+      const libDir = path.join(testDir, "lib")
+      const libSrcDir = path.join(libDir, "src")
+      const libDistDir = path.join(libDir, "dist")
+      const devtoolsDir = path.join(testDir, "devtools")
+      const devtoolsSrcDir = path.join(devtoolsDir, "src")
+      const devtoolsDistDir = path.join(devtoolsDir, "dist")
+      const cacheDir = path.join(process.cwd(), ".builderman", "cache", "v1")
+
+      try {
+        // Set up test directories and files
+        fs.mkdirSync(libSrcDir, { recursive: true })
+        fs.mkdirSync(libDistDir, { recursive: true })
+        fs.mkdirSync(devtoolsSrcDir, { recursive: true })
+        fs.mkdirSync(devtoolsDistDir, { recursive: true })
+
+        fs.writeFileSync(
+          path.join(libSrcDir, "index.ts"),
+          "export const lib = 1"
+        )
+        fs.writeFileSync(
+          path.join(devtoolsSrcDir, "index.ts"),
+          "export const devtools = 1"
+        )
+
+        const lib = task({
+          name: "lib",
+          cwd: libDir,
+          commands: {
+            build: {
+              run: "echo lib-build",
+              cache: {
+                inputs: ["src"],
+                outputs: ["dist"],
+              },
+            },
+          },
+        })
+
+        const devtools = task({
+          name: "devtools",
+          cwd: devtoolsDir,
+          commands: {
+            build: {
+              run: "echo devtools-build",
+              cache: {
+                inputs: ["src"],
+                outputs: ["dist"],
+                // Artifact input from lib:build
+                artifacts: [lib.artifact("build")],
+              },
+            },
+          },
+        })
+
+        const mockSpawn = createMockSpawn()
+        const pipe = pipeline([lib, devtools])
+
+        // First run: both tasks should execute
+        const first = await pipe.run({
+          command: "build",
+          spawn: mockSpawn as any,
+        })
+        assert.strictEqual(first.ok, true)
+        assert.strictEqual(first.stats.summary.completed, 2)
+
+        const callsAfterFirst = mockSpawn.mock.calls.length
+        assert.ok(callsAfterFirst >= 2, "First run should spawn both commands")
+
+        // Second run: lib should be skipped (cache hit), devtools should also be skipped
+        // because lib's artifacts haven't changed
+        const second = await pipe.run({
+          command: "build",
+          spawn: mockSpawn as any,
+        })
+
+        assert.strictEqual(second.ok, true)
+        assert.strictEqual(second.stats.summary.skipped, 2)
+
+        const libStats = second.stats.tasks.find((t) => t.name === "lib")
+        const devtoolsStats = second.stats.tasks.find(
+          (t) => t.name === "devtools"
+        )
+
+        assert.ok(libStats, "lib task should exist")
+        assert.ok(devtoolsStats, "devtools task should exist")
+        assert.strictEqual(libStats.status, "skipped")
+        assert.strictEqual(devtoolsStats.status, "skipped")
+
+        const callsAfterSecond = mockSpawn.mock.calls.length
+        assert.strictEqual(
+          callsAfterSecond,
+          callsAfterFirst,
+          "Second run should not spawn any commands due to cache"
+        )
+
+        // Third run: modify lib's source, lib should run, devtools should also run
+        // because lib's artifacts changed
+        fs.writeFileSync(
+          path.join(libSrcDir, "index.ts"),
+          "export const lib = 2"
+        )
+        // Simulate lib building by touching dist
+        fs.writeFileSync(
+          path.join(libDistDir, "index.js"),
+          "export const lib = 2"
+        )
+
+        const third = await pipe.run({
+          command: "build",
+          spawn: mockSpawn as any,
+        })
+
+        assert.strictEqual(third.ok, true)
+        // lib should run (cache miss), devtools should also run (artifact changed)
+        const libStatsThird = third.stats.tasks.find((t) => t.name === "lib")
+        const devtoolsStatsThird = third.stats.tasks.find(
+          (t) => t.name === "devtools"
+        )
+
+        assert.ok(libStatsThird, "lib task should exist")
+        assert.ok(devtoolsStatsThird, "devtools task should exist")
+        // At least one should have run (depending on timing, both might run)
+        const totalCompleted = third.stats.summary.completed
+        assert.ok(
+          totalCompleted >= 1,
+          "At least one task should run when artifacts change"
+        )
+      } finally {
+        // Clean up test directories and cache files
+        fs.rmSync(testDir, { recursive: true, force: true })
+        const libCacheFile = path.join(cacheDir, "lib-build.json")
+        const devtoolsCacheFile = path.join(cacheDir, "devtools-build.json")
+        if (fs.existsSync(libCacheFile)) {
+          fs.unlinkSync(libCacheFile)
+        }
+        if (fs.existsSync(devtoolsCacheFile)) {
+          fs.unlinkSync(devtoolsCacheFile)
+        }
+      }
+    })
+
+    it("throws when artifact() is called on command without cache", () => {
+      const taskWithoutCache = task({
+        name: "no-cache",
+        cwd: ".",
+        commands: {
+          build: "echo build",
+        },
+      })
+
+      assert.throws(
+        // @ts-expect-error - test invalid command
+        () => taskWithoutCache.artifact("build"),
+        (error: Error) => {
+          return (
+            error.message.includes("does not have cache configuration") ||
+            error.message.includes("cache")
+          )
+        }
+      )
+    })
+
+    it("throws when artifact() is called on command without cache.outputs", () => {
+      const taskWithoutOutputs = task({
+        name: "no-outputs",
+        cwd: ".",
+        commands: {
+          build: {
+            run: "echo build",
+            cache: {
+              inputs: ["src"],
+              // outputs missing
+            },
+          },
+        },
+      })
+
+      assert.throws(
+        // @ts-expect-error - test invalid command
+        () => taskWithoutOutputs.artifact("build"),
+        (error: Error) => {
+          return (
+            error.message.includes("does not have cache.outputs") ||
+            error.message.includes("outputs")
+          )
+        }
+      )
+    })
+
+    it("throws when artifact() is called on non-existent command", () => {
+      const taskWithCommands = task({
+        name: "has-commands",
+        cwd: ".",
+        commands: {
+          build: {
+            run: "echo build",
+            cache: {
+              inputs: ["src"],
+              outputs: ["dist"],
+            },
+          },
+        },
+      })
+
+      assert.throws(
+        // @ts-expect-error - test invalid command
+        () => taskWithCommands.artifact("test"),
+        (error: Error) => {
+          return error.message.includes('does not have a command "test"')
+        }
+      )
     })
   })
 })

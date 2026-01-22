@@ -3,13 +3,18 @@ import { task, pipeline } from "builderman"
 const a = task({
   name: "a",
   commands: {
-    build: "echo 'a'",
+    build: {
+      run: "echo 'a'",
+      cache: {
+        inputs: ["src"],
+        outputs: ["dist"],
+      },
+    },
   },
 })
 
 const b = task({
   name: "b",
-  dependencies: [a],
   env: {
     LOG_LEVEL: "info",
     TEST: "test",
@@ -20,6 +25,7 @@ const b = task({
       env: {
         LOG_LEVEL: "debug",
       },
+      dependencies: [a.command("build")],
     },
   },
 })

@@ -5,6 +5,7 @@ export type PipelineErrorCode =
   | typeof PipelineError.TaskCompletedTimeout
   | typeof PipelineError.TaskReadyTimeout
   | typeof PipelineError.InvalidTask
+  | typeof PipelineError.InvalidGraph
 
 export class PipelineError extends Error {
   readonly code: PipelineErrorCode
@@ -22,4 +23,5 @@ export class PipelineError extends Error {
   static TaskReadyTimeout = "task-ready-timeout" as const
   static TaskCompletedTimeout = "task-completed-timeout" as const
   static InvalidTask = "invalid-task" as const
+  static InvalidGraph = "invalid-graph" as const
 }

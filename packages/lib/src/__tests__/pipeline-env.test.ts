@@ -181,11 +181,19 @@ describe("environment variables", () => {
     const nestedTask2 = task({
       name: "nested:task2",
       commands: {
-        dev: "echo dev:task2",
-        build: "echo build:task2",
-        test: "echo test:task2",
+        dev: {
+          run: "echo dev:task2",
+          dependencies: [nestedTask1],
+        },
+        build: {
+          run: "echo build:task2",
+          dependencies: [nestedTask1],
+        },
+        test: {
+          run: "echo test:task2",
+          dependencies: [nestedTask1],
+        },
       },
-      dependencies: [nestedTask1],
     })
     const nested = pipeline([nestedTask1, nestedTask2])
 

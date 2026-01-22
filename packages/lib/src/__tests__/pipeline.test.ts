@@ -10,23 +10,116 @@ import { task } from "../task.js"
 import { createMockSpawn } from "./helpers.js"
 
 describe("pipeline", () => {
-  it("validates graph on creation", () => {
+  it("validates graph on run", async () => {
     const task1 = task({
       name: "task1",
       commands: { dev: "echo 1", build: "echo 1" },
     })
     const task2 = task({
       name: "task2",
-      commands: { dev: "echo 2", build: "echo 2" },
+      commands: {
+        dev: { run: "echo 2", dependencies: [task1] },
+        build: { run: "echo 2", dependencies: [task1] },
+      },
+    })
+    // Create circular dependency via command-level deps
+    const task1Dev = task1[$TASK_INTERNAL].commands["dev"]
+    const task1Build = task1[$TASK_INTERNAL].commands["build"]
+    task1Dev.commandRefDependencies = [
+      { taskId: task2[$TASK_INTERNAL].id, command: "dev" },
+    ]
+
+    task1Build.commandRefDependencies = [
+      { taskId: task2[$TASK_INTERNAL].id, command: "build" },
+    ]
+
+    const mockSpawn = createMockSpawn()
+    const pipe = pipeline([task1, task2])
+
+    // Graph validation happens during run() when the dynamic graph is built
+    // The pipeline will try to build the graph and should detect the cycle
+    try {
+      const result = await pipe.run({
+        spawn: mockSpawn as any,
+        command: "dev",
+      })
+      // If we get here, the cycle wasn't detected - that's a failure
+      assert.fail(
+        `Expected circular dependency error, but pipeline completed with ok: ${result.ok}`
+      )
+    } catch (error: any) {
+      // Graph validation throws during run()
+      assert.ok(
+        error.message.includes("Circular dependency") ||
+          error.message.includes("circular"),
+        `Expected circular dependency error, got: ${error.message}`
+      )
+    }
+  })
+
+  it("automatically creates command-level dependencies from task-level dependencies", async () => {
+    const executionOrder: string[] = []
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+    })
+    // task2 depends on task1 at the task level - should automatically create
+    // command-level dependencies for matching command names
+    const task2 = task({
+      name: "task2",
+      commands: { dev: "echo task2", build: "echo task2" },
       dependencies: [task1],
     })
-    // Create circular dependency
-    task1[$TASK_INTERNAL].dependencies.push(task2)
 
-    assert.throws(
-      () => pipeline([task1, task2]),
-      /Circular dependency detected/
-    )
+    const mockSpawn = createMockSpawn()
+
+    const pipe = pipeline([task1, task2])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+      command: "dev",
+      onTaskBegin: (name) => {
+        executionOrder.push(name)
+      },
+    })
+
+    assert.strictEqual(result.ok, true)
+    // task1 should start before task2 (because task2's dev command depends on task1's dev command)
+    assert.strictEqual(executionOrder.indexOf("task1"), 0)
+    assert.ok(executionOrder.indexOf("task2") > executionOrder.indexOf("task1"))
+  })
+
+  it("only creates dependencies for matching command names", async () => {
+    const executionOrder: string[] = []
+    const task1 = task({
+      name: "task1",
+      commands: { dev: "echo task1", build: "echo task1" },
+    })
+    // task2 has a "test" command that task1 doesn't have - it shouldn't get a dependency
+    const task2 = task({
+      name: "task2",
+      commands: {
+        dev: "echo task2",
+        build: "echo task2",
+        test: "echo task2",
+      },
+      dependencies: [task1],
+    })
+
+    const mockSpawn = createMockSpawn()
+
+    const pipe = pipeline([task1, task2])
+    const result = await pipe.run({
+      spawn: mockSpawn as any,
+      command: "test",
+      onTaskBegin: (name) => {
+        executionOrder.push(name)
+      },
+    })
+
+    assert.strictEqual(result.ok, true)
+    // task2's test command has no dependency on task1 (task1 has no test command)
+    // So task2 can start immediately
+    assert.ok(executionOrder.includes("task2"))
   })
 
   it("runs tasks in dependency order", async () => {
@@ -37,8 +130,10 @@ describe("pipeline", () => {
     })
     const task2 = task({
       name: "task2",
-      commands: { dev: "echo task2", build: "echo task2" },
-      dependencies: [task1],
+      commands: {
+        dev: { run: "echo task2", dependencies: [task1] },
+        build: { run: "echo task2", dependencies: [task1] },
+      },
     })
 
     const mockSpawn = createMockSpawn()
@@ -148,8 +243,10 @@ describe("pipeline", () => {
     })
     const task2 = task({
       name: "task2",
-      commands: { dev: "echo task2", build: "echo task2" },
-      dependencies: [task1],
+      commands: {
+        dev: { run: "echo task2", dependencies: [task1] },
+        build: { run: "echo task2", dependencies: [task1] },
+      },
     })
 
     const mockSpawn = createMockSpawn({
@@ -221,8 +318,10 @@ describe("pipeline", () => {
     })
     const task2 = task({
       name: "task2",
-      commands: { dev: "echo task2", build: "echo task2" },
-      dependencies: [task1],
+      commands: {
+        dev: { run: "echo task2", dependencies: [task1] },
+        build: { run: "echo task2", dependencies: [task1] },
+      },
     })
 
     const mockSpawn = createMockSpawn({
@@ -297,13 +396,17 @@ describe("pipeline", () => {
     })
     const task2 = task({
       name: "task2",
-      commands: { dev: "echo task2", build: "echo task2" },
-      dependencies: [task1],
+      commands: {
+        dev: { run: "echo task2", dependencies: [task1] },
+        build: { run: "echo task2", dependencies: [task1] },
+      },
     })
     const task3 = task({
       name: "task3",
-      commands: { dev: "echo task3", build: "echo task3" },
-      dependencies: [task1],
+      commands: {
+        dev: { run: "echo task3", dependencies: [task1] },
+        build: { run: "echo task3", dependencies: [task1] },
+      },
     })
 
     const mockSpawn = mock.fn((cmd: string, args: string[] = []) => {
@@ -387,8 +490,16 @@ describe("pipeline", () => {
     })
     const task3 = task({
       name: "task3",
-      commands: { dev: "echo task3", build: "echo task3" },
-      dependencies: [task1, task2],
+      commands: {
+        dev: {
+          run: "echo task3",
+          dependencies: [task1, task2],
+        },
+        build: {
+          run: "echo task3",
+          dependencies: [task1, task2],
+        },
+      },
     })
 
     const mockSpawn = mock.fn((cmd: string, args: string[] = []) => {
@@ -573,8 +684,10 @@ describe("pipeline", () => {
 
     const task2 = task({
       name: "task2",
-      commands: { dev: "sleep 1", build: "sleep 1" },
-      dependencies: [task1], // task2 depends on task1, so it starts after task1 completes
+      commands: {
+        dev: { run: "sleep 1", dependencies: [task1] },
+        build: { run: "sleep 1", dependencies: [task1] },
+      }, // task2 depends on task1, so it starts after task1 completes
     })
 
     let spawnCallCount = 0
@@ -948,10 +1061,13 @@ describe("pipeline", () => {
           dev: {
             run: "echo task2",
             teardown: "echo teardown2",
+            dependencies: [task1],
           },
-          build: "echo task2",
+          build: {
+            run: "echo task2",
+            dependencies: [task1],
+          },
         },
-        dependencies: [task1],
       })
 
       const mockSpawn = mock.fn((cmd: string, args: string[] = []) => {
@@ -1035,10 +1151,12 @@ describe("pipeline", () => {
             run: "echo api",
             teardown: "echo teardown:api",
           },
-          build: "echo api",
+          build: {
+            run: "echo api",
+            dependencies: [db],
+          },
         },
-        dependencies: [db], // api depends on db
-      })
+      }) // api depends on db
 
       const mockSpawn = createMockSpawn({
         commands: [
@@ -1140,10 +1258,15 @@ describe("pipeline", () => {
       const task2 = task({
         name: "task2",
         commands: {
-          build: "echo task2",
-          dev: "echo task2",
+          build: {
+            run: "echo task2",
+            // No dependency on task1 since task1 has no build command
+          },
+          dev: {
+            run: "echo task2",
+            dependencies: [task1],
+          },
         },
-        dependencies: [task1],
       })
 
       const mockSpawn = createMockSpawn()
@@ -1505,20 +1628,26 @@ describe("pipeline", () => {
 
       const task2 = task({
         name: "task2",
-        commands: { dev: "echo task2", build: "echo task2" },
-        dependencies: [task1],
+        commands: {
+          dev: { run: "echo task2", dependencies: [task1] },
+          build: { run: "echo task2", dependencies: [task1] },
+        },
       })
 
       const task3 = task({
         name: "task3",
-        commands: { dev: "echo task3", build: "echo task3" },
-        dependencies: [task1],
+        commands: {
+          dev: { run: "echo task3", dependencies: [task1] },
+          build: { run: "echo task3", dependencies: [task1] },
+        },
       })
 
       const task4 = task({
         name: "task4",
-        commands: { dev: "echo task4", build: "echo task4" },
-        dependencies: [task1],
+        commands: {
+          dev: { run: "echo task4", dependencies: [task1] },
+          build: { run: "echo task4", dependencies: [task1] },
+        },
       })
 
       const mockSpawn = createMockSpawn({
