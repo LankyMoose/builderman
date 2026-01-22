@@ -98,7 +98,7 @@ describe("pipeline <-> task conversion", () => {
     )
   })
 
-  it("unblocks dependents when all inner tasks are ready (pipeline.toTask in dev/watch)", async () => {
+  it("unblocks dependents when all inner tasks are ready (command-level deps)", async () => {
     const executionOrder: string[] = []
 
     const inner1 = task({
@@ -129,10 +129,6 @@ describe("pipeline <-> task conversion", () => {
       name: "dependent",
       commands: {
         dev: { run: "run dependent", dependencies: [nested] },
-        build: {
-          run: "run dependent",
-          dependencies: [nested],
-        },
       },
     })
 
@@ -143,13 +139,21 @@ describe("pipeline <-> task conversion", () => {
         const commandString = [cmd, ...args].join(" ")
         if (commandString.includes("inner-1")) {
           // Simulate a watch process that becomes ready but never exits
-          setImmediate(() => {
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(true)
+            }, 200)
+          }).then(() => {
             proc.stdout?.emit("data", Buffer.from("INNER_1_READY\n"))
           })
           return
         }
         if (commandString.includes("inner-2")) {
-          setImmediate(() => {
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(true)
+            }, 100)
+          }).then(() => {
             proc.stdout?.emit("data", Buffer.from("INNER_2_READY\n"))
           })
           return
@@ -166,6 +170,7 @@ describe("pipeline <-> task conversion", () => {
     })
 
     const result = await pipeline([nested, dependent]).run({
+      command: "dev",
       spawn: mockSpawn as any,
       signal: controller.signal,
       onTaskBegin: (name) => executionOrder.push(`begin:${name}`),
@@ -177,12 +182,113 @@ describe("pipeline <-> task conversion", () => {
 
     // We abort intentionally; the important part is that the dependent started.
     assert.strictEqual(result.ok, false)
-    assert.ok(
-      executionOrder.includes("begin:dependent"),
-      `dependent should have started after nested became ready. Order: ${executionOrder.join(
-        ", "
-      )}`
-    )
+    assert.deepStrictEqual(executionOrder, [
+      "begin:nested",
+      "begin:nested:inner-1",
+      "begin:nested:inner-2",
+      "ready:nested:inner-2",
+      "ready:nested:inner-1",
+      "ready:nested",
+      "begin:dependent",
+      "complete:dependent",
+    ])
+  })
+
+  it("unblocks dependents when all inner tasks are ready (task-level deps)", async () => {
+    const executionOrder: string[] = []
+
+    const inner1 = task({
+      name: "inner-1",
+      commands: {
+        dev: {
+          run: "run inner-1",
+          readyWhen: (out) => out.includes("INNER_1_READY"),
+        },
+        build: "run inner-1",
+      },
+    })
+
+    const inner2 = task({
+      name: "inner-2",
+      commands: {
+        dev: {
+          run: "run inner-2",
+          readyWhen: (out) => out.includes("INNER_2_READY"),
+        },
+        build: "run inner-2",
+      },
+    })
+
+    const nested = pipeline([inner1, inner2]).toTask({ name: "nested" })
+
+    const dependent = task({
+      name: "dependent",
+      commands: {
+        dev: { run: "run dependent" },
+      },
+      dependencies: [nested],
+    })
+
+    const controller = new AbortController()
+
+    const mockSpawn = createMockSpawn({
+      commandHandler: (cmd, args, proc) => {
+        const commandString = [cmd, ...args].join(" ")
+        if (commandString.includes("inner-1")) {
+          // Simulate a watch process that becomes ready but never exits
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(true)
+            }, 200)
+          }).then(() => {
+            proc.stdout?.emit("data", Buffer.from("INNER_1_READY\n"))
+          })
+          return
+        }
+        if (commandString.includes("inner-2")) {
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(true)
+            }, 100)
+          }).then(() => {
+            proc.stdout?.emit("data", Buffer.from("INNER_2_READY\n"))
+          })
+          return
+        }
+        if (commandString.includes("dependent")) {
+          // As soon as the dependent starts, abort the run so the test doesn't hang
+          setImmediate(() => {
+            controller.abort()
+            proc.emit("exit", 0)
+          })
+          return
+        }
+      },
+    })
+
+    const result = await pipeline([nested, dependent]).run({
+      command: "dev",
+      spawn: mockSpawn as any,
+      signal: controller.signal,
+      onTaskBegin: (name) => executionOrder.push(`begin:${name}`),
+      onTaskReady: (name) => executionOrder.push(`ready:${name}`),
+      onTaskComplete: (name) => executionOrder.push(`complete:${name}`),
+      onTaskSkipped: (name, _id, mode) =>
+        executionOrder.push(`skip:${name}:${mode}`),
+    })
+
+    // We abort intentionally; the important part is that the dependent started.
+    assert.strictEqual(result.ok, false)
+    assert.deepStrictEqual(executionOrder, [
+      "begin:nested",
+      "begin:nested:inner-1",
+      "begin:nested:inner-2",
+      "ready:nested:inner-2",
+      "ready:nested:inner-1",
+      "ready:nested",
+      "begin:dependent",
+      "complete:dependent",
+    ])
   })
 
   it("includes subtasks statistics for pipeline-tasks", async () => {

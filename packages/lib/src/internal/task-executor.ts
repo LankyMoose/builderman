@@ -4,6 +4,7 @@ import { createHash } from "node:crypto"
 
 import {
   $TASK_INTERNAL,
+  $PIPELINE_INTERNAL,
   CACHE_DIR,
   CACHE_VERSION,
 } from "./constants.js"
@@ -101,6 +102,10 @@ function executeNestedPipeline(
   // Track all task IDs that we've seen in the nested pipeline
   // This includes tasks with transitive dependencies, not just root tasks
   const allSeenTasks = new Set<string>()
+  // Track root task IDs from the nested pipeline to know when all root tasks are ready
+  // We need to wait for all root tasks to be ready before marking the outer task as ready
+  const rootTaskIds = new Set<string>()
+  let rootTasksInitialized = false
   let didMarkOuterReady = false
 
   const commandName =
@@ -131,19 +136,59 @@ function executeNestedPipeline(
   // Helper to check if all inner tasks are ready/complete/skipped
   const checkAllInnerTasksReady = () => {
     if (didMarkOuterReady) return
-    // Count unique tasks: ready (via readyWhen), complete, or skipped
-    // A task can be both ready and complete, so we use a Set to track unique tasks
-    // We need to check against all seen tasks, not just root tasks, because
-    // the nested pipeline may include transitive dependencies
-    // readyOrCompleteTasks includes all tasks that are ready, complete, or skipped
-    // (skipped tasks are added to readyOrCompleteTasks in onTaskSkipped)
-    const totalFinished = readyOrCompleteTasks.size
-    // Only mark as ready if we've seen at least one task and all seen tasks are finished
-    // This handles the case where transitive dependencies are included
-    if (allSeenTasks.size > 0 && totalFinished === allSeenTasks.size) {
-      didMarkOuterReady = true
-      // Mark outer task as ready - this allows dependents to proceed
-      callbacks.onTaskReady(taskId)
+    // We need to wait for all root tasks to be ready/complete/skipped before marking
+    // the outer task as ready. This ensures dependents don't start until all root
+    // tasks in the nested pipeline are ready.
+    // 
+    // We need to be careful about race conditions: a root task might become ready
+    // before another root task has begun. To handle this, we must wait until we've
+    // seen all expected root tasks begin before we can safely check if they're all ready.
+    const expectedRootTaskCount = rootTaskNames.size
+    
+    // Don't check readiness until we've seen all expected root tasks begin
+    // (some might be excluded, but we'll handle that by checking if we've seen
+    // enough tasks or if the pipeline has progressed enough)
+    if (!rootTasksInitialized || rootTaskIds.size === 0) {
+      // Haven't seen any root tasks yet - wait
+      return
+    }
+    
+    // Critical: We must wait until we've seen ALL expected root tasks begin
+    // before we can safely check if they're all ready. This prevents race conditions
+    // where one root task becomes ready before another has begun.
+    if (rootTaskIds.size < expectedRootTaskCount) {
+      // Haven't seen all root tasks begin yet - wait for them
+      return
+    }
+    
+    // Now that we've seen all root tasks begin, check if they're all ready/complete/skipped
+    // We must verify that EVERY root task that has begun is also ready/complete/skipped
+    // This is critical: we cannot mark the nested task as ready until ALL root tasks are ready
+    let allRootTasksReady = true
+    for (const rootTaskId of rootTaskIds) {
+      if (!readyOrCompleteTasks.has(rootTaskId)) {
+        // This root task has begun but is not yet ready/complete/skipped
+        // We must wait for it before marking the nested task as ready
+        allRootTasksReady = false
+        break
+      }
+    }
+    
+    // Only mark as ready if:
+    // 1. All root tasks that have begun are ready/complete/skipped
+    // 2. We've seen all expected root tasks begin
+    // 3. We haven't already marked as ready
+    // 4. The nested task is actually running (in runningTasks)
+    //    This ensures the queue manager can properly unblock dependents
+    if (allRootTasksReady && rootTaskIds.size === expectedRootTaskCount) {
+      // Verify the task is in runningTasks before marking as ready
+      // This is important for the queue manager to properly unblock dependents
+      const runningTasks = context.queueManager.getRunningTasks()
+      if (runningTasks.has(taskId)) {
+        didMarkOuterReady = true
+        // Mark outer task as ready - this allows dependents to proceed
+        callbacks.onTaskReady(taskId)
+      }
     }
   }
 
@@ -152,6 +197,13 @@ function executeNestedPipeline(
   const anyInternal = task[$TASK_INTERNAL] as any
   const pipelineDeps: Task[] | undefined = anyInternal.__pipelineDeps
   const excludeTasks = pipelineDeps ? new Set(pipelineDeps) : undefined
+
+  // Get root tasks from the nested pipeline to track when they're all ready
+  const nestedPipelineInternal = (nestedPipeline as any)[$PIPELINE_INTERNAL]
+  const rootTasks = nestedPipelineInternal?.tasks ?? []
+  const rootTaskNames = new Set(
+    rootTasks.map((t: Task) => t[$TASK_INTERNAL].name)
+  )
 
   // Run the nested pipeline with signal propagation
   // Pass the command from parent pipeline to nested pipeline
@@ -169,22 +221,42 @@ function executeNestedPipeline(
         if (pipelineStopped) return
         // Track all tasks we've seen (including transitive dependencies)
         allSeenTasks.add(nestedTaskId)
+        // Track root tasks by matching task name
+        // Root tasks are the tasks passed to pipeline(), which should have unique names
+        if (rootTaskNames.has(nestedTaskName)) {
+          rootTaskIds.add(nestedTaskId)
+          rootTasksInitialized = true
+          // Don't check readiness here - tasks aren't ready when they begin
+          // We'll check readiness when tasks become ready/complete/skipped
+        }
         config?.onTaskBegin?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
       },
-      onTaskReady: (_, nestedTaskId) => {
+      onTaskReady: (nestedTaskName, nestedTaskId) => {
         if (pipelineStopped) return
         // Track this task as ready (it may later become complete, but we only count it once)
         readyOrCompleteTasks.add(nestedTaskId)
-        checkAllInnerTasksReady()
-        // Note: We don't call config?.onTaskReady here because the nested pipeline
-        // already handles that internally. We only track readiness for the outer task.
+        // Use setImmediate to defer the readiness check to ensure all synchronous
+        // onTaskBegin callbacks have completed. This prevents race conditions where
+        // a task becomes ready before another task's onTaskBegin has finished executing.
+        // This is especially important when tasks start in parallel.
+        setImmediate(() => {
+          if (!pipelineStopped) {
+            checkAllInnerTasksReady()
+          }
+        })
+        config?.onTaskReady?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
       },
       onTaskComplete: (nestedTaskName, nestedTaskId) => {
         if (pipelineStopped) return
         nestedCompletedCount++
         // Track this task as complete (if it was already ready, the Set prevents double-counting)
         readyOrCompleteTasks.add(nestedTaskId)
-        checkAllInnerTasksReady()
+        // Use setImmediate to defer the readiness check
+        setImmediate(() => {
+          if (!pipelineStopped) {
+            checkAllInnerTasksReady()
+          }
+        })
         config?.onTaskComplete?.(`${taskName}:${nestedTaskName}`, nestedTaskId)
       },
       onTaskSkipped: (nestedTaskName, nestedTaskId, mode, reason) => {
@@ -194,7 +266,17 @@ function executeNestedPipeline(
         // (they're finished, just in a different way)
         allSeenTasks.add(nestedTaskId)
         readyOrCompleteTasks.add(nestedTaskId)
-        checkAllInnerTasksReady()
+        // Track root tasks if this is a root task that was skipped
+        if (rootTaskNames.has(nestedTaskName)) {
+          rootTaskIds.add(nestedTaskId)
+          rootTasksInitialized = true
+        }
+        // Use setImmediate to defer the readiness check
+        setImmediate(() => {
+          if (!pipelineStopped) {
+            checkAllInnerTasksReady()
+          }
+        })
         config?.onTaskSkipped?.(
           `${taskName}:${nestedTaskName}`,
           nestedTaskId,
