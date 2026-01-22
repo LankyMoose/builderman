@@ -1,6 +1,6 @@
 {
   "name": "@builderman/resolvers-pnpm",
-  "version": "1.5.3",
+  "version": "1.0.0",
   "description": "PNPM package dependency resolver for builderman",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -26,7 +26,12 @@
     "yaml": "2.8.2"
   },
   "peerDependencies": {
-    "builderman": "1.x"
+    "builderman": "^1.6.0"
+  },
+  "peerDependenciesMeta": {
+    "builderman": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "builderman": "workspace:^",
