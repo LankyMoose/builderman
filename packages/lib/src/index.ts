@@ -1,6 +1,7 @@
 export { task } from "./task.js"
 export { pipeline } from "./pipeline.js"
 export { PipelineError, type PipelineErrorCode } from "./errors.js"
+export * from "./resolvers/index.js"
 
 export type {
   Task,
@@ -16,3 +17,9 @@ export type {
   TaskStats,
   TaskStatus,
 } from "./types.js"
+
+export type {
+  InputResolver,
+  ResolveContext,
+  ResolvedInput,
+} from "./resolvers/types.js"

@@ -13,12 +13,14 @@ import { parseCommandLine, resolveExecutable } from "./util.js"
 
 import type { Task, Pipeline, CommandCacheConfig, Artifact } from "../types.js"
 import type { ExecutionContext } from "./execution-context.js"
+import type { InputResolver, ResolveContext } from "../resolvers/types.js"
 
 /**
- * Internal cache config with artifacts separated from inputs.
+ * Internal cache config with artifacts and resolvers separated from inputs.
  */
 type InternalCacheConfig = CommandCacheConfig & {
   artifacts?: Artifact[]
+  resolvers?: InputResolver[]
 }
 
 /**
@@ -779,6 +781,12 @@ interface Snapshot {
    * Stored as object (not Map) for JSON serialization.
    */
   artifactInputs?: Record<string, string>
+  /**
+   * Virtual inputs from resolvers.
+   * Object mapping resolver kind to their computed hashes.
+   * Only present if the task has resolver inputs.
+   */
+  virtualInputs?: Record<string, string>
 }
 
 function sanitizeFileName(name: string): string {
@@ -843,10 +851,33 @@ function createSnapshot(
 ): Snapshot {
   const inputs: FileMetadata[] = []
   const outputs: FileMetadata[] = []
+  const virtualInputs: Record<string, string> = {}
 
-  // After processing in task.ts, inputs only contains strings (artifacts are separated)
+  // After processing in task.ts, inputs only contains strings (artifacts and resolvers are separated)
   const inputPaths = (cacheConfig.inputs ?? []) as string[]
   const outputPaths = cacheConfig.outputs ?? []
+
+  // Resolve resolvers to concrete inputs
+  if (cacheConfig.resolvers && cacheConfig.resolvers.length > 0) {
+    const resolveContext: ResolveContext = {
+      taskCwd,
+      rootCwd: process.cwd(),
+    }
+
+    for (const resolver of cacheConfig.resolvers) {
+      const resolved = resolver.resolve(resolveContext)
+      for (const resolvedInput of resolved) {
+        if (resolvedInput.type === "file") {
+          // Add file inputs to the inputs array
+          inputs.push(...collectFileMetadata(taskCwd, resolvedInput.path))
+        } else if (resolvedInput.type === "virtual") {
+          // Store virtual inputs with their kind and hash
+          virtualInputs[`${resolvedInput.kind}:${resolvedInput.description}`] =
+            resolvedInput.hash
+        }
+      }
+    }
+  }
 
   for (const p of inputPaths) {
     inputs.push(...collectFileMetadata(taskCwd, p))
@@ -881,6 +912,10 @@ function createSnapshot(
     } else {
       snapshot.artifactInputs = artifactInputs
     }
+  }
+
+  if (Object.keys(virtualInputs).length > 0) {
+    snapshot.virtualInputs = virtualInputs
   }
 
   return snapshot
@@ -969,6 +1004,32 @@ function snapshotsEqual(a: Snapshot, b: Snapshot): boolean {
 
     for (const key of aKeys) {
       if (aArtifactInputs[key] !== bArtifactInputs[key]) {
+        return false
+      }
+    }
+  }
+
+  // Compare virtual inputs (from resolvers)
+  const aVirtualInputs = a.virtualInputs
+  const bVirtualInputs = b.virtualInputs
+
+  // If one has virtual inputs and the other doesn't, they're different
+  if (
+    (aVirtualInputs && !bVirtualInputs) ||
+    (!aVirtualInputs && bVirtualInputs)
+  ) {
+    return false
+  }
+
+  // If both have virtual inputs, compare them
+  if (aVirtualInputs && bVirtualInputs) {
+    const aKeys = Object.keys(aVirtualInputs).sort()
+    const bKeys = Object.keys(bVirtualInputs).sort()
+
+    if (aKeys.length !== bKeys.length) return false
+
+    for (const key of aKeys) {
+      if (aVirtualInputs[key] !== bVirtualInputs[key]) {
         return false
       }
     }

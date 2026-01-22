@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto"
-import { $TASK_INTERNAL, $ARTIFACT_INTERNAL } from "./internal/constants.js"
+import {
+  $TASK_INTERNAL,
+  $ARTIFACT_INTERNAL,
+  $RESOLVER_INTERNAL,
+} from "./internal/constants.js"
 import { validateTasks } from "./internal/util.js"
 import type {
   TaskConfig,
@@ -10,39 +14,7 @@ import type {
   CommandConfigInternal,
   CommandsInternal,
 } from "./types.js"
-
-/**
- * Creates a task configuration.
- * @param config - The configuration for the task.
- * @returns A task instance.
- * @example
- * const build = task({ name: "build", commands: { build: "npm run build" }, cwd: "." })
- * const deploy = task({ name: "deploy", commands: { build: "npm run deploy" }, cwd: ".", dependencies: [build] })
- * await pipeline([build, deploy]).run()
- */
-/**
- * Checks if a value is an Artifact.
- */
-function isArtifact(value: unknown): value is Artifact {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    $ARTIFACT_INTERNAL in value &&
-    value[$ARTIFACT_INTERNAL] === true
-  )
-}
-
-/**
- * Checks if a value is a Task.
- */
-function isTask(value: Task | Artifact): value is Task {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    $TASK_INTERNAL in value &&
-    !($ARTIFACT_INTERNAL in value)
-  )
-}
+import type { InputResolver } from "./resolvers/types.js"
 
 export function task<T extends Commands = Commands>(
   config: TaskConfig<T>
@@ -107,14 +79,17 @@ export function task<T extends Commands = Commands>(
       if (cache) {
         const inputs: string[] = []
         let artifacts: Artifact[] = []
+        let resolvers: InputResolver[] = []
         let outputs: string[] | undefined
 
-        // Process inputs - separate artifacts from file paths
+        // Process inputs - separate artifacts, resolvers, and file paths
         if (Array.isArray(cache.inputs)) {
           for (const item of cache.inputs) {
             // Check if item is an artifact (has $ARTIFACT_INTERNAL property)
             if (isArtifact(item)) {
               artifacts.push(item)
+            } else if (isInputResolver(item)) {
+              resolvers.push(item)
             } else if (typeof item === "string" && item.length > 0) {
               inputs.push(item)
             } else {
@@ -153,11 +128,12 @@ export function task<T extends Commands = Commands>(
         if (Array.isArray(cache.outputs)) {
           outputs = filterValidPaths(cache.outputs)
         }
-        // After processing, inputs only contains strings (artifacts have been separated)
-        // Store artifacts internally even though they're not in the public API
+        // After processing, inputs only contains strings (artifacts and resolvers have been separated)
+        // Store artifacts and resolvers internally even though they're not in the public API
         cacheConfig = {
           inputs: inputs.length > 0 ? inputs : undefined,
           artifacts: artifacts.length > 0 ? artifacts : undefined,
+          resolvers: resolvers.length > 0 ? resolvers : undefined,
           outputs,
         }
       }
@@ -270,4 +246,49 @@ function filterValidPaths(paths: string[]): string[] {
   return paths
     .filter((p) => typeof p === "string" && p.length > 0)
     .filter(Boolean)
+}
+
+/**
+ * Creates a task configuration.
+ * @param config - The configuration for the task.
+ * @returns A task instance.
+ * @example
+ * const build = task({ name: "build", commands: { build: "npm run build" }, cwd: "." })
+ * const deploy = task({ name: "deploy", commands: { build: "npm run deploy" }, cwd: ".", dependencies: [build] })
+ * await pipeline([build, deploy]).run()
+ */
+/**
+ * Checks if a value is an Artifact.
+ */
+function isArtifact(value: unknown): value is Artifact {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    $ARTIFACT_INTERNAL in value &&
+    value[$ARTIFACT_INTERNAL] === true
+  )
+}
+
+/**
+ * Checks if a value is an InputResolver.
+ */
+function isInputResolver(value: unknown): value is InputResolver {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    $RESOLVER_INTERNAL in value &&
+    value[$RESOLVER_INTERNAL] === true
+  )
+}
+
+/**
+ * Checks if a value is a Task.
+ */
+function isTask(value: Task | Artifact): value is Task {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    $TASK_INTERNAL in value &&
+    !($ARTIFACT_INTERNAL in value)
+  )
 }

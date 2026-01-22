@@ -4,6 +4,7 @@ import type {
   $ARTIFACT_INTERNAL,
 } from "./internal/constants.js"
 import type { PipelineError } from "./errors.js"
+import type { InputResolver } from "./resolvers/types.js"
 
 /**
  * Configuration for a command to be executed as part of a task.
@@ -81,15 +82,18 @@ export interface CommandsInternal extends Commands {
  */
 export interface CommandCacheConfig {
   /**
-   * Paths and/or artifacts that represent the task's inputs.
-   * These are typically source directories (e.g. "src") or files, or artifacts from other tasks.
+   * Paths, artifacts, and/or input resolvers that represent the task's inputs.
+   * These are typically source directories (e.g. "src") or files, artifacts from other tasks,
+   * or input resolvers that expand high-level intents into concrete cache inputs.
    *
    * Paths may be absolute or relative to the task's `cwd`.
    * Artifacts can be mixed with paths for convenience - they will be separated internally.
    * Artifacts are created via `task.artifact("command")` and are tracked by unique identifiers
    * that change when the producing task's outputs change.
+   * Input resolvers (e.g., `pnpm.workspacePackage()`) expand to include dependency information
+   * in the cache key.
    */
-  inputs?: (string | Artifact)[]
+  inputs?: (string | Artifact | InputResolver)[]
 
   /**
    * Paths that represent the task's outputs.
@@ -103,6 +107,7 @@ export interface CommandCacheConfig {
 
 export interface CommandCacheConfigInternal extends CommandCacheConfig {
   artifacts?: Artifact[]
+  resolvers?: InputResolver[]
 }
 /**
  * A command can be either a simple string or a CommandConfig object.
