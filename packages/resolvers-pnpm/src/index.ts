@@ -248,7 +248,20 @@ function createPnpmPackageResolver(
 
       // Determine scope
       let scope: "local" | "workspace" = options.scope || "workspace"
-      const workspaceRoot = ctx.rootCwd || findWorkspaceRoot(ctx.taskCwd)
+      let workspaceRoot: string | null = null
+
+      // Only scan for workspace root if we need it (not explicitly "local" scope)
+      if (scope !== "local") {
+        // Find workspace root - prefer finding from taskCwd, but also check rootCwd if provided
+        workspaceRoot = findWorkspaceRoot(ctx.taskCwd)
+        if (!workspaceRoot && ctx.rootCwd) {
+          // If rootCwd is provided and is a workspace, use it
+          const rootCwdWorkspace = findWorkspaceRoot(ctx.rootCwd)
+          if (rootCwdWorkspace) {
+            workspaceRoot = rootCwdWorkspace
+          }
+        }
+      }
 
       // Auto-detect scope if not specified
       if (!options.scope) {
