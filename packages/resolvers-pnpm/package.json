@@ -37,5 +37,8 @@
     "builderman": "workspace:^",
     "esbuild": "^0.27.2",
     "@types/node": "^25.0.8"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
