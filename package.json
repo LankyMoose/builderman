@@ -1,9 +1,9 @@
 {
   "name": "builderman",
   "scripts": {
-    "dev": "pnpm --filter ./packages/* run -r dev",
-    "build": "pnpm --filter ./packages/* run -r build",
-    "test": "pnpm --filter ./packages/* run -r test"
+    "dev": "pnpm run -r dev",
+    "build": "pnpm run -r build",
+    "test": "pnpm run -r test"
   },
   "packageManager": "pnpm@10.20.0"
 }
