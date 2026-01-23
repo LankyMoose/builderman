@@ -34,3 +34,7 @@
 p {
   margin: 0;
 }
+
+pre {
+  background-color: #0e0e0e !important;
+}

@@ -1,4 +1,5 @@
 import { Head, Link } from "kiru/router"
+import RelatedSection from "../../components/RelatedSection"
 
 <Head.Content>
   <title>Core Concepts - builderman</title>
@@ -260,9 +261,9 @@ When a pipeline is converted to a task:
 - You can specify dependencies and environment variables for the pipeline task
 - The tasks in the pipeline are tracked as subtasks in execution statistics, and are included in the summary object
 
-<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+<RelatedSection>
   <span className="text-sm">
     <strong>Next:</strong> Learn about <Link to="/error-handling" className="underline text-blue-400">Error Handling</Link>,
     <Link to="/cancellation" className="underline text-blue-400">Cancellation</Link> and <Link to="/teardown" className="underline text-blue-400">Teardown</Link>.
   </span>
-</div>
+</RelatedSection>

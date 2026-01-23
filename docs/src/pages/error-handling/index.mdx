@@ -1,4 +1,5 @@
 import { Head, Link } from "kiru/router"
+import RelatedSection from "../../components/RelatedSection"
 
 <Head.Content>
   <title>Error Handling - builderman</title>
@@ -6,7 +7,7 @@ import { Head, Link } from "kiru/router"
 
 # Error Handling Guarantees
 
-<div className="bg-red-900/20 border border-red-800 rounded-lg p-6 mb-6">
+<div className="bg-red-900/20 border-2 border-red-800/75 rounded-lg p-6 mb-6">
   <span className="text-lg font-semibold mb-2 inline-block">
     builderman pipelines never throw.
   </span>
@@ -97,8 +98,8 @@ for (const task of result.stats.tasks) {
 }
 ```
 
-<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+<RelatedSection>
   <span className="text-sm">
     <strong>Related:</strong> Learn about <Link to="/cancellation" className="underline text-blue-400">Cancellation</Link> and <Link to="/execution-statistics" className="underline text-blue-400">Execution Statistics</Link>.
   </span>
-</div>
+</RelatedSection>
