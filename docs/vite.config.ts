@@ -16,6 +16,7 @@ export default defineConfig({
     },
     kiru({
       ssg: {
+        // baseUrl: "/builderman/",
         document: "document.tsx",
         page: "index.{tsx,mdx}",
         layout: "layout.tsx",
