@@ -1,0 +1,103 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Cancellation - builderman</title>
+</Head.Content>
+
+# Cancellation
+
+You can cancel a running pipeline using an `AbortSignal`. This is useful for implementing timeouts, user-initiated cancellation, or graceful shutdown.
+
+## Basic Cancellation
+
+```ts
+import { pipeline, PipelineError } from "builderman"
+
+const controller = new AbortController()
+
+const runPromise = pipeline([backend, frontend]).run({
+  signal: controller.signal,
+})
+
+// Cancel after 5 seconds
+setTimeout(() => {
+  controller.abort()
+}, 5000)
+
+const result = await runPromise
+
+if (!result.ok && result.error.code === PipelineError.Aborted) {
+  console.error("Pipeline was cancelled")
+  console.log(`Tasks still running: ${result.stats.summary.running}`)
+}
+```
+
+## What Happens on Cancellation
+
+When a pipeline is cancelled:
+
+- Running tasks receive a termination signal (SIGTERM on Unix, taskkill on Windows)
+- Tasks that haven't started yet are skipped
+- Teardown logic still runs for tasks that had started (in reverse dependency order)
+- The result will have `ok: false` with `error.code === PipelineError.Aborted`
+- Execution statistics are still available, showing which tasks completed, failed, or were still running
+
+## Timeout Example
+
+Here's a practical example of implementing a timeout:
+
+```ts
+async function runWithTimeout(pipeline, timeoutMs) {
+  const controller = new AbortController()
+
+  const timeoutId = setTimeout(() => {
+    controller.abort()
+  }, timeoutMs)
+
+  const result = await pipeline.run({
+    signal: controller.signal,
+  })
+  
+  clearTimeout(timeoutId)
+
+  return result
+}
+
+const result = await runWithTimeout(
+  pipeline([task1, task2, task3]),
+  30000 // 30 second timeout
+)
+
+if (!result.ok && result.error.code === PipelineError.Aborted) {
+  console.error("Pipeline timed out after 30 seconds")
+}
+```
+
+## User-Initiated Cancellation
+
+You can also cancel based on user input or other events:
+
+```ts
+const controller = new AbortController()
+
+// Handle Ctrl+C
+process.on("SIGINT", () => {
+  console.log("\nCancelling pipeline...")
+  controller.abort()
+})
+
+const result = await pipeline([task1, task2, task3]).run({
+  signal: controller.signal,
+})
+
+if (!result.ok && result.error.code === PipelineError.Aborted) {
+  console.log("Pipeline was cancelled by user")
+}
+```
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Related:</strong> Learn about<Link to="/error-handling" className="underline text-blue-400">
+      Error Handling</Link> and <Link to="/teardown" className="underline text-blue-400">Teardown</Link>.
+  </span>
+</div>

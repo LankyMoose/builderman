@@ -1,0 +1,244 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Advanced Examples - builderman</title>
+</Head.Content>
+
+# Advanced Examples
+
+This comprehensive example shows how to build a complex monorepo pipeline with caching, artifacts, and pipeline composition.
+
+## Monorepo Build Pipeline
+
+```ts
+import { task, pipeline } from "builderman"
+import { pnpm } from "@builderman/resolvers-pnpm"
+
+/**
+ * Shared core module used by multiple packages
+ */
+const core = task({
+  name: "core",
+  cwd: "packages/core",
+  commands: {
+    build: {
+      run: "pnpm build",
+      cache: {
+        inputs: ["src", pnpm.package()],
+        outputs: ["dist"],
+      },
+    },
+    dev: {
+      run: "pnpm dev",
+      readyWhen: (output) => output.includes("Watching for file changes"),
+    },
+    test: {
+      run: "pnpm test",
+      env: {
+        NODE_ENV: "development",
+      },
+    },
+  },
+})
+
+/**
+ * Factory for related feature packages
+ */
+const createFeatureTask = (name: string) =>
+  task({
+    name,
+    cwd: `packages/${name}`,
+    commands: {
+      build: {
+        run: "pnpm build",
+        cache: {
+          inputs: ["src", core.artifact("build"), pnpm.package()],
+          outputs: ["dist"],
+        },
+      },
+      dev: {
+        run: "pnpm dev",
+        readyWhen: (output) => output.includes("Build complete"),
+      },
+    },
+  })
+
+const featureA = createFeatureTask("feature-a")
+const featureB = createFeatureTask("feature-b")
+
+/**
+ * Compose related features into a single pipeline task
+ */
+const features = pipeline([featureA, featureB]).toTask({
+  name: "features",
+  dependencies: [core],
+})
+
+/**
+ * Consumer package with command-level dependencies
+ */
+const integration = task({
+  name: "integration",
+  cwd: "packages/integration",
+  commands: {
+    build: {
+      run: "pnpm build",
+      cache: {
+        inputs: [
+          "src",
+          core.artifact("build"),
+          featureA.artifact("build"),
+          featureB.artifact("build"),
+          pnpm.package(),
+        ],
+        outputs: ["dist"],
+      },
+    },
+    dev: {
+      run: "pnpm dev",
+      dependencies: [core, features],
+    },
+  },
+})
+
+/**
+ * End-to-end test suites
+ */
+const smokeTests = task({
+  name: "e2e:smoke",
+  cwd: "tests/smoke",
+  commands: {
+    build: {
+      run: "pnpm build",
+      cache: {
+        inputs: [
+          "src",
+          core.artifact("build"),
+          integration.artifact("build"),
+          pnpm.package(),
+        ],
+        outputs: ["dist"],
+      },
+    },
+    test: "pnpm test",
+  },
+  dependencies: [core],
+  env: {
+    NODE_ENV: "development",
+  },
+})
+
+const fullTests = task({
+  name: "e2e:full",
+  cwd: "tests/full",
+  commands: {
+    build: {
+      run: "pnpm build",
+      cache: {
+        inputs: [
+          "src",
+          core.artifact("build"),
+          integration.artifact("build"),
+          pnpm.package(),
+        ],
+        outputs: ["dist"],
+      },
+    },
+    test: "pnpm test",
+  },
+  // Conditional dependency based on environment
+  dependencies: (process.env.CI ? [smokeTests] : []).concat(core),
+  env: {
+    NODE_ENV: "development",
+  },
+})
+
+/**
+ * Pipeline execution
+ */
+const command = process.argv[2]
+
+const result = await pipeline([
+  core,
+  features,
+  integration,
+  smokeTests,
+  fullTests,
+]).run({
+  command,
+  onTaskBegin: (name) => console.log(`[start] ${name}`),
+  onTaskSkipped: (name, _, __, reason) =>
+    console.log(`[skip] ${name} (${reason})`),
+  onTaskComplete: (name) => console.log(`[done] ${name}`),
+})
+
+console.log(result)
+```
+
+## What This Example Demonstrates
+
+- **Caching with artifacts**: Tasks reference outputs from other tasks using `task.artifact("command")`
+- **Input resolvers**: Using `pnpm.package()` to track package dependencies
+- **Pipeline composition**: Converting pipelines to tasks with `pipeline.toTask()`
+- **Command-level dependencies**: Different commands can have different dependencies
+- **Conditional dependencies**: Adjusting dependencies based on runtime conditions
+- **Observability**: Using callbacks to track pipeline execution
+- **Task factories**: Creating reusable task definitions
+
+## Key Patterns
+
+### Task Factories
+
+Use functions to create similar tasks with different configurations:
+
+```ts
+const createFeatureTask = (name: string) =>
+  task({
+    name,
+    cwd: `packages/${name}`,
+    commands: {
+      build: {
+        /* ... */
+      },
+    },
+  })
+
+const featureA = createFeatureTask("feature-a")
+const featureB = createFeatureTask("feature-b")
+```
+
+### Conditional Dependencies
+
+Dependencies can be computed based on runtime conditions:
+
+```ts
+const fullTests = task({
+  name: "e2e:full",
+  // Conditional dependency based on environment
+  dependencies: (process.env.CI ? [smokeTests] : []).concat(core),
+  // ...
+})
+```
+
+### Pipeline Composition
+
+Convert pipelines to tasks for better organization:
+
+```ts
+const features = pipeline([featureA, featureB]).toTask({
+  name: "features",
+  dependencies: [core],
+})
+
+// Now "features" can be used as a single task
+const result = await pipeline([core, features, integration]).run()
+```
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Related:</strong> Review <Link to="/core-concepts" className="underline text-blue-400">
+      Core Concepts</Link>, <Link to="/caching" className="underline text-blue-400">
+      Caching</Link> and <Link to="/when-to-use" className="underline text-blue-400">
+      When to Use</Link>.
+  </span>
+</div>

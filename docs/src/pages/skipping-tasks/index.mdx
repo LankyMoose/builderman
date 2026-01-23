@@ -1,0 +1,116 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Skipping Tasks - builderman</title>
+</Head.Content>
+
+# Skipping Tasks
+
+Tasks can be skipped in two scenarios:
+
+1. **Missing command**: If a task does not define a command for the current mode, it is **skipped** by default
+2. **Cache hit**: If a task has cache configuration and the cache matches, the task is **skipped** (see [Caching](/caching))
+
+## Skipped Task Behavior
+
+Skipped tasks:
+
+- Participate in the dependency graph
+- Resolve immediately
+- Unblock dependent tasks
+- Do not execute commands or teardowns
+
+```ts
+const dbTask = task({
+  name: "database",
+  commands: {
+    dev: "docker-compose up",
+  },
+})
+
+const apiTask = task({
+  name: "api",
+  commands: {
+    dev: "npm run dev",
+    build: "npm run build",
+  },
+  dependencies: [dbTask],
+})
+
+const result = await pipeline([dbTask, apiTask]).run({
+  command: "build",
+  onTaskSkipped: (taskName, taskId, mode, reason) => {
+    if (reason === "command-not-found") {
+      console.log(`[${taskName}] skipped (no "${mode}" command)`)
+    } else if (reason === "cache-hit") {
+      console.log(`[${taskName}] skipped (cache hit)`)
+    }
+  },
+})
+```
+
+## Strict Mode
+
+In **strict mode**, missing commands cause the pipeline to fail. This is useful for CI and release pipelines where you want to ensure all required tasks are defined.
+
+```ts
+const result = await pipeline([dbTask, apiTask]).run({
+  command: "build",
+  strict: true,
+})
+
+if (!result.ok) {
+  console.error("Pipeline failed in strict mode:", result.error.message)
+}
+```
+
+In strict mode, if a task doesn't have a command for the requested mode, the pipeline will fail with an appropriate error message.
+
+## Task-Level Skip Override
+
+Tasks may explicitly allow skipping, even when strict mode is enabled. This is useful for optional tasks that may not be needed in all scenarios.
+
+```ts
+const dbTask = task({
+  name: "database",
+  commands: {
+    dev: "docker-compose up",
+  },
+  allowSkip: true, // Allow skipping even in strict mode
+})
+
+const result = await pipeline([dbTask]).run({
+  command: "build",
+  strict: true,
+  // dbTask will be skipped even though strict mode is enabled
+})
+```
+
+## Skip Reasons
+
+The `onTaskSkipped` callback receives a reason parameter that indicates why the task was skipped:
+
+- `"command-not-found"` - The task doesn't have a command for the current mode
+- `"cache-hit"` - The task's cache matched, so execution was skipped
+
+```ts
+const result = await pipeline([task1, task2]).run({
+  onTaskSkipped: (taskName, taskId, mode, reason) => {
+    switch (reason) {
+      case "command-not-found":
+        console.log(`${taskName} has no ${mode} command`)
+        break
+      case "cache-hit":
+        console.log(`${taskName} skipped due to cache hit`)
+        break
+    }
+  },
+})
+```
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Related:</strong> Learn about <Link to="/caching" className="underline text-blue-400">
+      Caching</Link> and <Link to="/execution-statistics" className="underline text-blue-400">Execution Statistics</Link>.
+  </span>
+</div>

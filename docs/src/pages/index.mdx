@@ -1,0 +1,122 @@
+import { Head, Link } from "kiru/router"
+import QuickStartExample from "./quick-start-example.md"
+
+<Head.Content>
+  <title>builderman - A dependency-aware task runner</title>
+</Head.Content>
+
+<div className="text-center">
+  <h1 className="text-5xl font-bold mb-4">builderman</h1>
+  <span className="text-xl text-neutral-400 mb-8 inline-block">
+    A dependency-aware task runner for building, developing, and orchestrating
+    complex workflows
+  </span>
+</div>
+
+<div className="bg-neutral-900/50 rounded-lg p-6 border border-neutral-800 mb-8">
+  <h2 className="mb-4 mt-0">Key Features</h2>
+  <ul className="grid md:grid-cols-2 gap-4 list-none pl-0">
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">🧩</span>
+      <div>
+        <strong>Explicit dependency graph</strong> — tasks run only when their
+        dependencies are satisfied
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">🔁</span>
+      <div>
+        <strong>Multi-mode commands</strong> —{" "}
+        <code className="bg-neutral-800 px-1 rounded">dev</code>,{" "}
+        <code className="bg-neutral-800 px-1 rounded">build</code>,{" "}
+        <code className="bg-neutral-800 px-1 rounded">deploy</code>, or any
+        custom mode
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">⏳</span>
+      <div>
+        <strong>Readiness detection</strong> — wait for long-running processes
+        to become "ready"
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">🧹</span>
+      <div>
+        <strong>Guaranteed teardown</strong> — automatic cleanup in reverse
+        dependency order
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">🛑</span>
+      <div>
+        <strong>Cancellation support</strong> — abort pipelines using{" "}
+        <code className="bg-neutral-800 px-1 rounded">AbortSignal</code>
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">📊</span>
+      <div>
+        <strong>Rich execution statistics</strong> — always available, even on
+        failure
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">❌</span>
+      <div>
+        <strong>Never throws</strong> — failures are returned as structured
+        results
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">🧱</span>
+      <div>
+        <strong>Composable pipelines</strong> — pipelines can be converted into
+        tasks
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">💾</span>
+      <div>
+        <strong>Task-level caching</strong> — skip tasks when inputs and outputs
+        haven't changed
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">🎯</span>
+      <div>
+        <strong>Artifact dependencies</strong> — reference outputs from other
+        tasks in cache inputs
+      </div>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-2xl">🔌</span>
+      <div>
+        <strong>Input resolvers</strong> — track package dependencies and other
+        dynamic inputs
+      </div>
+    </li>
+  </ul>
+</div>
+
+<div className="bg-neutral-900/50 rounded-lg p-6 border border-neutral-800 mb-8">
+  <h2 className="mb-4 mt-0">Quick Start</h2>
+  <QuickStartExample />
+</div>
+
+{" "}
+
+<div className="flex gap-4 justify-center">
+  <Link
+    to="/installation"
+    className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-semibold transition-colors"
+  >
+    Get Started
+  </Link>
+  <Link
+    to="/quick-start"
+    className="bg-neutral-800 hover:bg-neutral-700 px-6 py-3 rounded-lg font-semibold transition-colors"
+  >
+    Quick Start Guide
+  </Link>
+</div>

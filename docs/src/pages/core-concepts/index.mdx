@@ -1,0 +1,268 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Core Concepts - builderman</title>
+</Head.Content>
+
+# Core Concepts
+
+## Tasks
+
+A **task** represents a unit of work. Each task:
+
+- Has a unique name
+- Defines commands for one or more modes
+- May depend on other tasks
+- May register teardown logic
+- Has an optional working directory (`cwd`, defaults to `"."`)
+
+```ts
+import { task } from "builderman"
+
+const myPackage = task({
+  name: "myPackage",
+  commands: {
+    build: "tsc",
+    dev: {
+      run: "tsc --watch",
+      readyWhen: (stdout) => stdout.includes("Watching for file changes."),
+    },
+  },
+  cwd: "packages/myPackage",
+})
+```
+
+## Commands & Modes
+
+Each task can define commands for different **modes** (for example `dev`, `build`, `deploy`).
+
+When running a pipeline:
+
+- If `command` is provided, that mode is used
+- Otherwise:
+  - `"build"` is used when `NODE_ENV === "production"`
+  - `"dev"` is used in all other cases
+
+Commands may be:
+
+- A string (executed directly), or
+- An object with:
+  - `run`: the command to execute
+  - `dependencies`: optional array of tasks that this command depends on
+  - `readyWhen`: a predicate that marks the task as ready
+  - `teardown`: cleanup logic to run after completion
+  - `env`: environment variables specific to this command
+  - `cache`: configuration for task-level caching
+
+## Environment Variables
+
+Environment variables can be provided at multiple levels, with more specific levels overriding less specific ones:
+
+**Precedence order (highest to lowest):**
+
+1. Command-level `env` (in command config)
+2. Task-level `env` (in task config)
+3. Pipeline-level `env` (in `pipeline.run()`)
+4. Process environment variables
+
+### Command-Level Environment Variables
+
+```ts
+const server = task({
+  name: "server",
+  commands: {
+    dev: {
+      run: "node server.js",
+      env: {
+        PORT: "3000",
+        NODE_ENV: "development",
+      },
+    },
+  },
+})
+```
+
+### Task-Level Environment Variables
+
+```ts
+const server = task({
+  name: "server",
+  env: {
+    // in both dev and build, the PORT environment variable will be set to "3000"
+    PORT: "3000",
+  },
+  commands: {
+    dev: {
+      run: "node server.js",
+      env: {
+        LOG_LEVEL: "debug",
+        // overrides the task-level PORT environment variable
+        PORT: "4200",
+      },
+    },
+    build: {
+      run: "node server.js",
+      env: {
+        LOG_LEVEL: "info",
+      },
+    },
+  },
+})
+```
+
+### Pipeline-Level Environment Variables
+
+```ts
+const result = await pipeline([server]).run({
+  env: {
+    DATABASE_URL: "postgres://localhost/mydb",
+    REDIS_URL: "redis://localhost:6379",
+  },
+})
+```
+
+## Dependencies
+
+Tasks may depend on other tasks. A task will not start until all its dependencies have completed (or been skipped).
+
+When a task has task-level dependencies, each command in the task automatically depends on the command with the same name in the dependency task (if it exists). For example, if a task has commands `{ dev, build }` and depends on another task with commands `{ dev, build }`, then this task's `dev` command will depend on the dependency's `dev` command, and this task's `build` command will depend on the dependency's `build` command.
+
+```ts
+const server = task({
+  name: "server",
+  commands: {
+    dev: "node server.js",
+    build: "node server.js",
+  },
+  dependencies: [shared], // Both "build" and "dev" commands will depend on shared's matching commands, if they exist
+})
+```
+
+### Command-Level Dependencies
+
+You can also specify dependencies at the command level for more granular control. This is useful when different commands have different dependency requirements.
+
+```ts
+const database = task({
+  name: "database",
+  commands: {
+    dev: {
+      run: "docker compose up",
+      readyWhen: (output) => output.includes("ready"),
+      teardown: "docker compose down",
+    },
+  },
+})
+
+const migrations = task({
+  name: "migrations",
+  commands: {
+    build: "npm run migrate",
+  },
+})
+
+const api = task({
+  name: "api",
+  commands: {
+    // Build only needs migrations
+    build: {
+      run: "npm run build",
+      dependencies: [migrations],
+    },
+    // Dev needs both the database and migrations
+    dev: {
+      run: "npm run dev",
+      dependencies: [database, migrations],
+    },
+  },
+})
+```
+
+## Pipelines
+
+A **pipeline** executes a set of tasks according to their dependency graph.
+
+```ts
+import { pipeline } from "builderman"
+
+const result = await pipeline([backend, frontend]).run({
+  command: "dev",
+  onTaskBegin: (name) => {
+    console.log(`[${name}] starting`)
+  },
+  onTaskComplete: (name) => {
+    console.log(`[${name}] complete`)
+  },
+})
+```
+
+### Concurrency Control
+
+By default, pipelines run as many tasks concurrently as possible (limited only by dependencies). You can limit concurrent execution using `maxConcurrency`:
+
+```ts
+const result = await pipeline([task1, task2, task3, task4, task5]).run({
+  maxConcurrency: 2, // At most 2 tasks will run simultaneously
+})
+```
+
+When `maxConcurrency` is set:
+
+- Tasks that are ready to run (dependencies satisfied) will start up to the limit
+- As tasks complete, new ready tasks will start to maintain the concurrency limit
+- Dependencies are still respected — a task won't start until its dependencies complete
+
+This is useful for:
+
+- Limiting resource usage (CPU, memory, network)
+- Controlling database connection pools
+- Managing API rate limits
+- Reducing system load in CI environments
+
+If `maxConcurrency` is not specified, there is no limit (tasks run concurrently as dependencies allow).
+
+### Pipeline Composition
+
+Pipelines can be converted into tasks and composed like any other unit of work.
+
+```ts
+const backend = task({
+  name: "backend",
+  cwd: "packages/backend",
+  commands: { build: "npm run build" },
+})
+
+const frontend = task({
+  name: "frontend",
+  cwd: "packages/frontend",
+  commands: { build: "npm run build" },
+})
+
+const productionMonitoring = task({
+  name: "production-monitoring",
+  cwd: "packages/production-monitoring",
+  commands: { build: "npm run build" },
+})
+
+// Convert a pipeline into a task
+const app = pipeline([backend, frontend]).toTask({
+  name: "app",
+  dependencies: [productionMonitoring], // The app task depends on productionMonitoring
+})
+
+const result = await pipeline([app, productionMonitoring]).run()
+```
+
+When a pipeline is converted to a task:
+
+- It becomes a **single node** in the dependency graph, with the tasks in the pipeline as subtasks
+- The tasks in the pipeline all must either complete or be flagged as 'ready' or 'skipped' before dependents can start
+- You can specify dependencies and environment variables for the pipeline task
+- The tasks in the pipeline are tracked as subtasks in execution statistics, and are included in the summary object
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Next:</strong> Learn about <Link to="/error-handling" className="underline text-blue-400">Error Handling</Link>,
+    <Link to="/cancellation" className="underline text-blue-400">Cancellation</Link> and <Link to="/teardown" className="underline text-blue-400">Teardown</Link>.
+  </span>
+</div>

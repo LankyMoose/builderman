@@ -1,0 +1,104 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Error Handling - builderman</title>
+</Head.Content>
+
+# Error Handling Guarantees
+
+<div className="bg-red-900/20 border border-red-800 rounded-lg p-6 mb-6">
+  <span className="text-lg font-semibold mb-2 inline-block">
+    builderman pipelines never throw.
+  </span>
+  <span className="text-neutral-300 inline-block">
+    All failures — including task errors, invalid configuration, cancellation,
+    and process termination — are reported through a structured `RunResult`.
+  </span>
+</div>
+
+## Structured Error Handling
+
+```ts
+import { pipeline, PipelineError } from "builderman"
+
+const result = await pipeline([backend, frontend]).run()
+
+if (!result.ok) {
+  switch (result.error.code) {
+    case PipelineError.Aborted:
+      console.error("Pipeline was cancelled")
+      break
+    case PipelineError.TaskFailed:
+      console.error("Task failed:", result.error.message)
+      break
+    case PipelineError.TaskReadyTimeout:
+      console.error("Task was not ready in time:", result.error.message)
+      break
+    case PipelineError.TaskCompletedTimeout:
+      console.error("Task did not complete in time:", result.error.message)
+      break
+    case PipelineError.ProcessTerminated:
+      console.error("Process terminated:", result.error.message)
+      break
+    case PipelineError.InvalidTask:
+      console.error("Invalid task configuration:", result.error.message)
+      break
+  }
+}
+```
+
+## Error Codes
+
+### `PipelineError.Aborted`
+
+The pipeline was cancelled using an `AbortSignal`.
+
+### `PipelineError.TaskFailed`
+
+A task's command exited with a non-zero exit code or threw an error.
+
+### `PipelineError.TaskReadyTimeout`
+
+A task with a `readyWhen` predicate did not become ready within the timeout period.
+
+### `PipelineError.TaskCompletedTimeout`
+
+A task did not complete within the specified timeout period.
+
+### `PipelineError.ProcessTerminated`
+
+A task's process was terminated (e.g., by the OS or a signal).
+
+### `PipelineError.InvalidTask`
+
+A task has invalid configuration (e.g., missing name, invalid command structure).
+
+## Execution Statistics Always Available
+
+Execution statistics are **always available**, even on failure. This allows you to inspect what happened during the pipeline run, regardless of whether it succeeded or failed.
+
+```ts
+const result = await pipeline([task1, task2, task3]).run()
+
+// Statistics are always available, even if result.ok is false
+console.log("Total tasks:", result.stats.summary.total)
+console.log("Completed:", result.stats.summary.completed)
+console.log("Failed:", result.stats.summary.failed)
+console.log("Skipped:", result.stats.summary.skipped)
+console.log("Still running:", result.stats.summary.running)
+
+// Inspect individual task results
+for (const task of result.stats.tasks) {
+  console.log(`${task.name}: ${task.status}`)
+  if (task.status === "failed") {
+    console.error("Error:", task.error?.message)
+    console.error("Exit code:", task.exitCode)
+  }
+}
+```
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Related:</strong> Learn about <Link to="/cancellation" className="underline text-blue-400">Cancellation</Link> and <Link to="/execution-statistics" className="underline text-blue-400">Execution Statistics</Link>.
+  </span>
+</div>

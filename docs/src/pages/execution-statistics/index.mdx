@@ -1,0 +1,181 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Execution Statistics - builderman</title>
+</Head.Content>
+
+# Execution Statistics
+
+Every pipeline run returns detailed execution statistics. These statistics are **always available**, even when the pipeline fails or is cancelled.
+
+## Pipeline Statistics
+
+The pipeline-level statistics provide an overview of the entire run:
+
+```ts
+const result = await pipeline([task1, task2, task3]).run()
+
+console.log(result.stats.status) // "success" | "failed" | "aborted"
+console.log(result.stats.command) // Executed mode
+console.log(result.stats.durationMs) // Total execution time
+console.log(result.stats.summary.total)
+console.log(result.stats.summary.completed)
+console.log(result.stats.summary.failed)
+console.log(result.stats.summary.skipped)
+console.log(result.stats.summary.running)
+```
+
+## Task Statistics
+
+Each task provides detailed per-task data:
+
+```ts
+for (const task of result.stats.tasks) {
+  console.log(task.name, task.status)
+  console.log(task.durationMs)
+
+  if (task.status === "failed") {
+    console.error(task.error?.message)
+    console.error(task.exitCode)
+  }
+
+  if (task.teardown) {
+    console.log("Teardown:", task.teardown.status)
+  }
+
+  // Cache information is available when the task has cache configuration
+  if (task.cache) {
+    console.log("Cache checked:", task.cache.checked)
+    if (task.cache.hit !== undefined) {
+      console.log("Cache hit:", task.cache.hit)
+    }
+  }
+
+  // when using pipeline.toTask() to convert a pipeline into a task,
+  // the task will have subtasks
+  if (task.subtasks) {
+    for (const subtask of task.subtasks) {
+      // ...
+    }
+  }
+}
+```
+
+## Task Status Values
+
+Each task has a `status` field that indicates its final state:
+
+- `"completed"` - Task finished successfully
+- `"failed"` - Task encountered an error
+- `"skipped"` - Task was skipped (missing command or cache hit)
+- `"running"` - Task was still running when the pipeline ended (e.g., on cancellation)
+
+## Teardown Statistics
+
+If a task has teardown logic, its statistics include teardown information:
+
+```ts
+for (const task of result.stats.tasks) {
+  if (task.teardown) {
+    console.log(`${task.name} teardown:`)
+    console.log("  Status:", task.teardown.status) // "completed" | "failed" | "skipped"
+    console.log("  Duration:", task.teardown.durationMs)
+
+    if (task.teardown.status === "failed") {
+      console.error("  Error:", task.teardown.error?.message)
+    }
+  }
+}
+```
+
+## Cache Statistics
+
+Tasks with cache configuration include cache-related statistics:
+
+```ts
+for (const task of result.stats.tasks) {
+  if (task.cache) {
+    console.log(`${task.name} cache:`)
+    console.log("  Checked:", task.cache.checked) // true if cache was checked
+    console.log("  Hit:", task.cache.hit) // true if cache matched, false if not, undefined if not checked
+    console.log("  Cache file:", task.cache.cacheFile) // Path to cache file
+    console.log("  Inputs:", task.cache.inputs) // Array of input paths/artifacts
+    console.log("  Outputs:", task.cache.outputs) // Array of output paths
+  }
+}
+```
+
+## Subtask Statistics
+
+When using `pipeline.toTask()` to convert a pipeline into a task, the task will have subtasks:
+
+```ts
+const app = pipeline([backend, frontend]).toTask({
+  name: "app",
+})
+
+const result = await pipeline([app]).run()
+
+const appTask = result.stats.tasks.find((t) => t.name === "app")
+if (appTask?.subtasks) {
+  for (const subtask of appTask.subtasks) {
+    console.log(`Subtask ${subtask.name}: ${subtask.status}`)
+    // Subtasks have the same structure as regular tasks
+  }
+}
+```
+
+## Example: Building a Report
+
+Here's a practical example of using statistics to build a detailed report:
+
+```ts
+function buildReport(result) {
+  const { stats } = result
+
+  console.log(`Pipeline: ${stats.status}`)
+  console.log(`Command: ${stats.command}`)
+  console.log(`Duration: ${stats.durationMs}ms`)
+  console.log(`\nSummary:`)
+  console.log(`  Total: ${stats.summary.total}`)
+  console.log(`  Completed: ${stats.summary.completed}`)
+  console.log(`  Failed: ${stats.summary.failed}`)
+  console.log(`  Skipped: ${stats.summary.skipped}`)
+  console.log(`  Running: ${stats.summary.running}`)
+
+  console.log(`\nTasks:`)
+  for (const task of stats.tasks) {
+    const statusIcon =
+      {
+        completed: "✓",
+        failed: "✗",
+        skipped: "⊘",
+        running: "⟳",
+      }[task.status] || "?"
+
+    console.log(`  ${statusIcon} ${task.name} (${task.status})`)
+
+    if (task.status === "failed") {
+      console.log(`    Error: ${task.error?.message}`)
+      console.log(`    Exit code: ${task.exitCode}`)
+    }
+
+    if (task.cache?.hit) {
+      console.log(`    Cache: HIT`)
+    } else if (task.cache?.checked) {
+      console.log(`    Cache: MISS`)
+    }
+  }
+}
+
+const result = await pipeline([task1, task2, task3]).run()
+buildReport(result)
+```
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Related:</strong> Learn about <Link to="/error-handling" className="underline text-blue-400">
+      Error Handling</Link> and <Link to="/caching" className="underline text-blue-400">
+      Caching</Link>.
+  </span>
+</div>

@@ -1,0 +1,74 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Quick Start - builderman</title>
+</Head.Content>
+
+# Quick Start
+
+This guide will help you get started with builderman by creating a simple pipeline with three tasks.
+
+## Basic Example
+
+This example defines a simple CI pipeline where `test` runs only after `build` completes, and `deploy` runs only after `test` completes.
+
+```ts
+import { task, pipeline } from "builderman"
+
+const build = task({
+  name: "build",
+  commands: {
+    build: "tsc",
+    dev: "tsc --watch",
+  },
+})
+
+const test = task({
+  name: "test",
+  commands: {
+    build: "npm test",
+  },
+  dependencies: [build],
+})
+
+const deploy = task({
+  name: "deploy",
+  commands: {
+    build: "npm run deploy",
+  },
+  dependencies: [test],
+})
+
+const result = await pipeline([build, test, deploy]).run({
+  command: "build",
+})
+console.log(result)
+```
+
+## What This Does
+
+- Creates three tasks: `build`, `test`, and `deploy`
+- Defines explicit dependencies between tasks
+- Runs the pipeline in `build` mode
+- Returns a structured result with execution statistics
+
+## Result Structure
+
+The result is always a structured object with an `ok` property:
+
+```ts
+if (result.ok) {
+  console.log("Pipeline succeeded!")
+  console.log("Duration:", result.stats.durationMs, "ms")
+  console.log("Tasks completed:", result.stats.summary.completed)
+} else {
+  console.error("Pipeline failed:", result.error.message)
+  // Statistics are still available even on failure
+  console.log("Tasks that ran:", result.stats.summary.completed)
+}
+```
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg text-sm">
+  <strong>Next Steps:</strong> Learn about <Link to="/core-concepts" className="underline text-blue-400">Core Concepts</Link>
+  to understand tasks, commands, dependencies, and pipelines in detail.
+</div>

@@ -1,0 +1,89 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>When to Use - builderman</title>
+</Head.Content>
+
+# When Should I Use builderman?
+
+<div className="bg-green-900/20 border border-green-800 rounded-lg p-6 mb-6">
+  <h2 className="mt-0 mb-4">
+    builderman is a good fit when:
+  </h2>
+  <ul className="list-disc list-inside space-y-2 text-neutral-300 mb-0 pl-0">
+    <li>You have interdependent tasks that must run in a well-defined order</li>
+    <li>You run long-lived processes that need readiness detection (not just exit codes)</li>
+    <li>Cleanup and teardown matter (containers, databases, servers, watchers)</li>
+    <li>You want deterministic execution with structured results instead of log-scraping</li>
+    <li>You need observable pipelines that behave the same locally and in CI</li>
+    <li>You want to compose and reuse workflows, not just run scripts</li>
+  </ul>
+</div>
+
+<div className="bg-yellow-900/20 border border-yellow-800 rounded-lg p-6 mb-6">
+  <h2 className="mt-0 mb-4">It may be overkill if:</h2>
+  <ul className="list-disc list-inside space-y-2 text-neutral-300 mb-0 pl-0">
+    <li>Your workflow is a handful of linear npm scripts</li>
+    <li>Tasks are fire-and-forget and don't require cleanup</li>
+    <li>You don't need dependency graphs, cancellation, or failure propagation</li>
+  </ul>
+</div>
+
+## Use Cases
+
+### Monorepos
+
+builderman excels in monorepo environments where you need to:
+
+- Build packages in the correct dependency order
+- Cache builds based on inputs and artifacts
+- Compose complex build pipelines
+- Run tests after builds complete
+
+### Development Workflows
+
+For development, builderman helps with:
+
+- Starting databases, servers, and watchers in the right order
+- Waiting for services to be ready before starting dependents
+- Ensuring proper cleanup when stopping development servers
+- Handling cancellation gracefully (e.g., Ctrl+C)
+
+### CI/CD Pipelines
+
+In CI/CD, builderman provides:
+
+- Structured error reporting (no log-scraping needed)
+- Execution statistics for monitoring and debugging
+- Deterministic execution that works the same locally and in CI
+- Concurrency control to manage resource usage
+- Strict mode to catch missing commands early
+
+### Complex Orchestration
+
+When you need to orchestrate complex workflows:
+
+- Compose pipelines from smaller pipelines
+- Handle conditional dependencies
+- Manage long-running processes with readiness detection
+- Ensure cleanup happens even on failure
+
+## Comparison with Alternatives
+
+### vs. npm scripts
+
+builderman provides explicit dependency graphs, structured results, cancellation, and teardown. npm scripts are simpler but don't handle complex dependencies or cleanup.
+
+### vs. Task runners (Gulp, Grunt)
+
+builderman focuses on process execution and orchestration rather than file transformations. It's better suited for running external commands, managing dependencies, and handling long-running processes.
+
+### vs. Make, Just, Task
+
+builderman is JavaScript/TypeScript-native, provides structured results, handles cancellation and teardown automatically, and supports readiness detection for long-running processes.
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Ready to get started?</strong> Check out the <Link to="/quick-start" className="underline text-blue-400">Quick Start</Link> guide or explore <Link to="/core-concepts" className="underline text-blue-400">Core Concepts</Link>.
+  </span>
+</div>

@@ -1,0 +1,117 @@
+import { Head, Link } from "kiru/router"
+
+<Head.Content>
+  <title>Teardown - builderman</title>
+</Head.Content>
+
+# Teardown
+
+Tasks may specify teardown commands that run automatically when a task completes or fails. Teardowns are executed **in reverse dependency order** (dependents before dependencies) to ensure safe cleanup.
+
+## Basic Teardown
+
+The simplest form of teardown is a string command:
+
+```ts
+const dbTask = task({
+  name: "database",
+  commands: {
+    dev: {
+      run: "docker-compose up",
+      teardown: "docker-compose down",
+    },
+    build: "echo build",
+  },
+})
+```
+
+## Teardown Callbacks
+
+You can observe teardown execution using callbacks. Teardown failures do **not** cause the pipeline to fail — they are best-effort cleanup operations.
+
+```ts
+const result = await pipeline([dbTask]).run({
+  onTaskTeardown: (taskName) => {
+    console.log(`[${taskName}] starting teardown`)
+  },
+  onTaskTeardownError: (taskName, error) => {
+    console.error(`[${taskName}] teardown failed: ${error.message}`)
+  },
+})
+```
+
+Teardown results are recorded in task statistics.
+
+## Teardown Execution Rules
+
+**Teardowns run when:**
+
+- The command entered the running state
+- The pipeline completes successfully
+- The pipeline fails after tasks have started
+
+**Teardowns do not run when:**
+
+- The task was skipped
+- The task failed before starting (spawn error)
+- The pipeline never began execution
+
+## Reverse Dependency Order
+
+Teardowns are executed in reverse dependency order to ensure safe cleanup. This means:
+
+- Dependent tasks are torn down before their dependencies
+- This prevents issues where a dependency is cleaned up while dependents are still using it
+- The order is automatically determined from the dependency graph
+
+Example:
+
+```ts
+const database = task({
+  name: "database",
+  commands: {
+    dev: {
+      run: "docker compose up",
+      teardown: "docker compose down",
+    },
+  },
+})
+
+const api = task({
+  name: "api",
+  commands: {
+    dev: {
+      run: "npm run dev",
+      teardown: "echo 'API stopped'",
+    },
+  },
+  dependencies: [database],
+})
+
+// When the pipeline completes:
+// 1. api teardown runs first (dependent)
+// 2. database teardown runs second (dependency)
+```
+
+## Teardown in Statistics
+
+You can inspect teardown results in the execution statistics:
+
+```ts
+const result = await pipeline([dbTask]).run()
+
+for (const task of result.stats.tasks) {
+  if (task.teardown) {
+    console.log(`${task.name} teardown: ${task.teardown.status}`)
+    if (task.teardown.status === "failed") {
+      console.error("Teardown error:", task.teardown.error?.message)
+    }
+  }
+}
+```
+
+<div className="mt-8 p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+  <span className="text-sm">
+    <strong>Related:</strong> Learn about <Link to="/cancellation" className="underline text-blue-400">Cancellation</Link> and <Link to="/execution-statistics" className="underline text-blue-400">Execution Statistics</Link>.
+  </span>
+</div>
