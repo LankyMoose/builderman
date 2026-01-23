@@ -3,7 +3,10 @@ import kiru from "vite-plugin-kiru"
 import mdx from "@mdx-js/rollup"
 import shiki from "@shikijs/rehype"
 
+const baseUrl = process.env.NODE_ENV === "production" ? "/builderman" : "/"
+
 export default defineConfig({
+  base: baseUrl,
   plugins: [
     {
       //enforce: "pre",
@@ -16,12 +19,12 @@ export default defineConfig({
     },
     kiru({
       ssg: {
-        // baseUrl: "/builderman/",
+        baseUrl: baseUrl,
         document: "document.tsx",
         page: "index.{tsx,mdx}",
         layout: "layout.tsx",
         // sitemap: {
-        //   domain: "https://github.com/builderman/builderman",
+        //   domain: "https://lankymoose.github.io",
         //   overrides: {
         //     "/": {
         //       changefreq: "daily",
