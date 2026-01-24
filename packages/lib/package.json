@@ -8,6 +8,7 @@
     "type": "git",
     "url": "https://github.com/LankyMoose/builderman"
   },
+  "homepage": "https://builderman-ck6.pages.dev/",
   "scripts": {
     "test": "node --test ./dist/__tests__/*.test.js",
     "build": "rm -rf dist && tsc",
