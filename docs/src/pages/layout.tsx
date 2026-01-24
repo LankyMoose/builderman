@@ -36,15 +36,14 @@ const navGroups = [
 ]
 
 export default function RootLayout({ children }: { children: JSX.Children }) {
-  const { state, baseUrl } = useFileRouter()
+  const { state } = useFileRouter()
 
   const isActive = (path: string) => {
-    const basePath = state.pathname.slice(baseUrl.length)
     if (path === "/") {
-      return basePath === "/"
+      return state.pathname === "/"
     }
 
-    return basePath.startsWith(path)
+    return state.pathname.startsWith(path)
   }
 
   return (

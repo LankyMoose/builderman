@@ -3,10 +3,7 @@ import kiru from "vite-plugin-kiru"
 import mdx from "@mdx-js/rollup"
 import shiki from "@shikijs/rehype"
 
-const baseUrl = process.env.NODE_ENV === "production" ? "/builderman" : "/"
-
 export default defineConfig({
-  base: baseUrl,
   plugins: [
     {
       //enforce: "pre",
@@ -19,7 +16,6 @@ export default defineConfig({
     },
     kiru({
       ssg: {
-        baseUrl: baseUrl,
         document: "document.tsx",
         page: "index.{tsx,mdx}",
         layout: "layout.tsx",
