@@ -22,6 +22,7 @@ It is designed for monorepos, long-running development processes, and CI/CD pipe
 >   - [Pipelines](#pipelines)
 >     - [Concurrency Control](#concurrency-control)
 >     - [Pipeline Composition](#pipeline-composition)
+>       - [Limiting Concurrency in a Pipeline Task](#limiting-concurrency-in-a-pipeline-task)
 > - [Error Handling Guarantees](#error-handling-guarantees)
 > - [Cancellation](#cancellation)
 > - [Teardown](#teardown)
@@ -51,7 +52,7 @@ It is designed for monorepos, long-running development processes, and CI/CD pipe
 - 🛑 **Cancellation support** — abort pipelines using `AbortSignal`
 - 📊 **Rich execution statistics** — always available, even on failure
 - ❌ **Never throws** — failures are returned as structured results
-- 🧱 **Composable pipelines** — pipelines can be converted into tasks
+- 🧱 **Composable pipelines** — pipelines can be converted into tasks, with optional per-group concurrency limits
 - 💾 **Task-level caching** — skip tasks when inputs and outputs haven't changed
 - 🎯 **Artifact dependencies** — reference outputs from other tasks in cache inputs
 - 🔌 **Input resolvers** — track package dependencies and other dynamic inputs
@@ -396,6 +397,27 @@ When a pipeline is converted to a task:
 - The tasks in the pipeline all must either complete or be flagged as 'ready' or 'skipped' before dependents can start
 - You can specify dependencies and environment variables for the pipeline task
 - The tasks in the pipeline are tracked as subtasks in execution statistics, and are included in the summary object
+
+#### Limiting Concurrency in a Pipeline Task
+
+`toTask()` accepts an optional `maxConcurrency` to cap how many of the inner pipeline's tasks run at the same time. This is independent of the outer pipeline's own `maxConcurrency`.
+
+`maxConcurrency` can be a fixed number, or a **function of the command name** so the limit varies per mode:
+
+```ts
+const e2eSuites = pipeline([a, b, c]).toTask({
+  name: "e2e",
+  // Sequential in CI for "test", unlimited otherwise
+  maxConcurrency: (command) =>
+    command === "test" && !!process.env.CI ? 1 : Infinity,
+})
+
+const result = await pipeline([app, productionMonitoring, e2eSuites]).run({
+  command: "test",
+})
+```
+
+Tasks that belong to the outer pipeline (like `lib` and `vitePlugin` above) are automatically excluded from the inner pipeline — they will not be re-run even when the inner tasks declare them as dependencies.
 
 ---
 
@@ -998,17 +1020,23 @@ const fullTests = task({
 })
 
 /**
+ * Group e2e suites into a single pipeline task.
+ * Run sequentially in CI to avoid flaky parallel browser tests,
+ * unlimited locally for faster feedback.
+ */
+const e2e = pipeline([smokeTests, fullTests]).toTask({
+  name: "e2e",
+  dependencies: [integration],
+  maxConcurrency: (command) =>
+    command === "test" && !!process.env.CI ? 1 : Infinity,
+})
+
+/**
  * Pipeline execution
  */
 const command = process.argv[2]
 
-const result = await pipeline([
-  core,
-  features,
-  integration,
-  smokeTests,
-  fullTests,
-]).run({
+const result = await pipeline([core, features, integration, e2e]).run({
   command,
   onTaskBegin: (name) => console.log(`[start] ${name}`),
   onTaskSkipped: (name, _, __, reason) =>
@@ -1024,6 +1052,7 @@ This example demonstrates:
 - **Caching with artifacts**: Tasks reference outputs from other tasks using `task.artifact("command")`
 - **Input resolvers**: Using `pnpm.package()` to track package dependencies
 - **Pipeline composition**: Converting pipelines to tasks with `pipeline.toTask()`
+- **Per-group concurrency**: Using `maxConcurrency` on `toTask()` to control inner parallelism
 - **Command-level dependencies**: Different commands can have different dependencies
 - **Conditional dependencies**: Adjusting dependencies based on runtime conditions
 - **Observability**: Using callbacks to track pipeline execution
