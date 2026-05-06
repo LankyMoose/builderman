@@ -155,6 +155,17 @@ const fullTests = task({
 })
 
 /**
+ * Group e2e suites into a single pipeline task.
+ * Run sequentially in CI to avoid flaky parallel browser tests,
+ * unlimited locally for faster feedback.
+ */
+const e2e = pipeline([smokeTests, fullTests]).toTask({
+  name: "e2e",
+  dependencies: [integration],
+  maxConcurrency: (cmd) => cmd === "test" && !!process.env.CI ? 1 : Infinity,
+})
+
+/**
  * Pipeline execution
  */
 const command = process.argv[2]
@@ -163,8 +174,7 @@ const result = await pipeline([
   core,
   features,
   integration,
-  smokeTests,
-  fullTests,
+  e2e,
 ]).run({
   command,
   onTaskBegin: (name) => console.log(`[start] ${name}`),
@@ -181,6 +191,7 @@ console.log(result)
 - **Caching with artifacts**: Tasks reference outputs from other tasks using `task.artifact("command")`
 - **Input resolvers**: Using `pnpm.package()` to track package dependencies
 - **Pipeline composition**: Converting pipelines to tasks with `pipeline.toTask()`
+- **Per-group concurrency**: Using `maxConcurrency` on `toTask()` to control inner parallelism
 - **Command-level dependencies**: Different commands can have different dependencies
 - **Conditional dependencies**: Adjusting dependencies based on runtime conditions
 - **Observability**: Using callbacks to track pipeline execution
@@ -234,6 +245,20 @@ const features = pipeline([featureA, featureB]).toTask({
 // Now "features" can be used as a single task
 const result = await pipeline([core, features, integration]).run()
 ```
+
+### Per-Group Concurrency
+
+Use `maxConcurrency` on `toTask()` to limit parallelism within a group of tasks, independently of the outer pipeline. This accepts either a fixed number or a function of the command name:
+
+```ts
+const e2e = pipeline([smokeTests, fullTests]).toTask({
+  name: "e2e",
+  // Run sequentially in CI for "test", unlimited for all other commands
+  maxConcurrency: (cmd) => cmd === "test" && !!process.env.CI ? 1 : Infinity,
+})
+```
+
+Tasks in the outer pipeline that the inner tasks depend on are excluded automatically — they won't be re-run inside the group.
 
 <RelatedSection>
   <span className="text-sm">

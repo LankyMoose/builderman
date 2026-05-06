@@ -261,6 +261,24 @@ When a pipeline is converted to a task:
 - You can specify dependencies and environment variables for the pipeline task
 - The tasks in the pipeline are tracked as subtasks in execution statistics, and are included in the summary object
 
+### Limiting Concurrency in a Pipeline Task
+
+`toTask()` accepts an optional `maxConcurrency` to cap how many of the inner pipeline's tasks run at the same time. This is independent of the outer pipeline's own `maxConcurrency`.
+
+`maxConcurrency` can be a number, or a **function of the command name** so the limit varies per mode:
+
+```ts
+const e2eSuites = pipeline([a, b, c]).toTask({
+  name: "e2e",
+  // Sequential in CI for "test", unlimited otherwise
+  maxConcurrency: (command) => command === "test" && !!process.env.CI ? 1 : Infinity,
+})
+
+const result = await pipeline([app, productionMonitoring, e2eSuites]).run({
+  command: "test",
+})
+```
+
 <RelatedSection>
   <span className="text-sm">
     <strong>Next:</strong> Learn about <Link to="/error-handling" className="underline text-blue-400">Error Handling</Link>,

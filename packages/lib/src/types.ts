@@ -198,6 +198,9 @@ interface TaskInternal extends TaskConfig {
   // If set, this task represents a nested pipeline created via pipeline.toTask()
   pipeline?: Pipeline
   commands: CommandsInternal
+  // If set, the inner pipeline for this task is capped at this concurrency.
+  // Resolved at execution time so it can be a function of the command name.
+  maxConcurrency?: number | ((command: string) => number)
 }
 
 type InferCommandNamesWithCacheOutput<T extends Commands> = {
@@ -346,6 +349,14 @@ export interface PipelineTaskConfig {
    * Overrides environment variables inherited from the parent process.
    */
   env?: Record<string, string>
+
+  /**
+   * Optional maximum number of tasks in this pipeline that can run concurrently.
+   * Accepts a static number or a function of the command name, enabling
+   * different limits per command (e.g. sequential in CI for "test" only).
+   * @default Infinity
+   */
+  maxConcurrency?: number | ((command: string) => number)
 }
 
 interface PipelineInternal {

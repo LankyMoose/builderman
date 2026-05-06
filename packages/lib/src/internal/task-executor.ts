@@ -52,6 +52,54 @@ export interface TaskExecutionCallbacks {
 }
 
 /**
+ * Collects all tasks that are transitive dependencies of the given inner tasks
+ * but are NOT themselves inner tasks of the group.
+ *
+ * These are tasks already managed by the outer pipeline (they will have been
+ * completed before the group starts), so the inner pipeline can safely skip them.
+ */
+function collectOuterDeps(innerTasks: Task[], commandName: string): Set<Task> {
+  const innerTaskSet = new Set(innerTasks)
+  const outerDeps = new Set<Task>()
+  const processed = new Set<Task>()
+
+  const getAllDeps = (task: Task): Task[] => {
+    const internal = task[$TASK_INTERNAL]
+    const deps: Task[] = [...internal.dependencies]
+
+    const cmdConfig = internal.commands[commandName]
+    if (cmdConfig && typeof cmdConfig !== "string") {
+      for (const dep of cmdConfig.dependencies ?? []) {
+        deps.push(dep)
+      }
+      for (const artifact of cmdConfig.cache?.artifacts ?? []) {
+        deps.push(artifact.task)
+      }
+    }
+
+    return deps
+  }
+
+  const collect = (task: Task): void => {
+    if (processed.has(task)) return
+    processed.add(task)
+
+    for (const dep of getAllDeps(task)) {
+      if (!innerTaskSet.has(dep)) {
+        outerDeps.add(dep)
+      }
+      collect(dep)
+    }
+  }
+
+  for (const task of innerTasks) {
+    collect(task)
+  }
+
+  return outerDeps
+}
+
+/**
  * Executes a task (either a regular task or a nested pipeline).
  */
 export function executeTask(
@@ -127,6 +175,15 @@ function executeNestedPipeline(
 
   const taskInternal = task[$TASK_INTERNAL]
 
+  // Resolve pipeline-level concurrency limit (if any) for this command
+  const rawMaxConcurrency = taskInternal.maxConcurrency
+  const resolvedMaxConcurrency =
+    rawMaxConcurrency === undefined
+      ? undefined
+      : typeof rawMaxConcurrency === "function"
+        ? rawMaxConcurrency(commandName)
+        : rawMaxConcurrency
+
   // Merge environment variables: pipeline.env -> task.env (from pipeline.toTask config)
   const taskEnv = taskInternal.env
   const pipelineEnv = config?.env ?? {}
@@ -194,15 +251,14 @@ function executeNestedPipeline(
     }
   }
 
-  // Get task-level dependencies of the pipeline task to exclude from nested graph
-  // These dependencies are already satisfied by the outer pipeline
-  const excludeTasks = taskInternal.pipeline
-    ? new Set(taskInternal.dependencies)
-    : undefined
+  // Build the set of tasks to exclude from the inner pipeline's graph.
+  // Any task that is a transitive dependency of the inner tasks but is not
+  // itself an inner task belongs to the outer pipeline and has already been
+  // completed before this group started. The inner pipeline can safely skip them.
+  const rootTasks = nestedPipeline[$PIPELINE_INTERNAL]?.tasks ?? []
+  const excludeTasks = collectOuterDeps(rootTasks, commandName)
 
-  // Get root tasks from the nested pipeline to track when they're all ready
-  const nestedPipelineInternal = nestedPipeline[$PIPELINE_INTERNAL]
-  const rootTasks = nestedPipelineInternal?.tasks ?? []
+  // Names of root tasks — used below to detect when all root tasks are ready
   const rootTaskNames = new Set(
     rootTasks.map((t: Task) => t[$TASK_INTERNAL].name)
   )
@@ -219,6 +275,7 @@ function executeNestedPipeline(
       signal: context.signal, // Pass signal to nested pipeline
       env: mergedEnv, // Pass merged env to nested pipeline
       excludeTasks, // Exclude already-satisfied dependencies from nested graph
+      maxConcurrency: resolvedMaxConcurrency, // Pipeline-level concurrency cap
       onTaskBegin: (nestedTaskName, nestedTaskId) => {
         if (pipelineStopped) return
         // Track all tasks we've seen (including transitive dependencies)

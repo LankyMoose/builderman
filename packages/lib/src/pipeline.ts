@@ -23,7 +23,7 @@ export function pipeline(tasks: Task[]): Pipeline {
       tasks: tasksClone,
     },
 
-    toTask({ name, dependencies, env }): Task {
+    toTask({ name, dependencies, env, maxConcurrency }): Task {
       const dependenciesClone = [...(dependencies || [])]
       validateTasks(dependenciesClone)
 
@@ -39,6 +39,10 @@ export function pipeline(tasks: Task[]): Pipeline {
 
       // Mark this task as a pipeline task so it can be detected by the executor
       syntheticTask[$TASK_INTERNAL].pipeline = pipelineImpl
+
+      if (maxConcurrency !== undefined) {
+        syntheticTask[$TASK_INTERNAL].maxConcurrency = maxConcurrency
+      }
 
       return syntheticTask
     },
